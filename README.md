@@ -1,4 +1,4 @@
-# Applying-and-Extending-the-Lee-Carter-Model
+# Applying and Extending the Lee-Carter model
 This was a project I completed during my university studies in 2021! Uploading here so I don't forget/ lose it lol
 
 I have uploaded:
