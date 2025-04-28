@@ -1,0 +1,2663 @@
+---
+title: "STAT0035: Applying and extending the Lee-Carter model"
+author: "KQVN9"
+date: "Last updated: `r format.Date(Sys.Date(), '%d/%m/%Y')`"
+output:
+  bookdown::pdf_document2:
+    dev: png 
+    toc: yes
+    toc_depth: '2'
+    citation_package: biblatex  
+bibliography: references.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library("ggplot2")
+library("tidyverse")
+library("StMoMo")
+library("reshape2")
+library("sf")
+library("rmapshaper")
+library("ggmap")
+library("rgdal")
+
+setwd("C:/Users/z-laptop/OneDrive - University College London/Project")
+
+deaths = read.table("mltper_1x1.txt", header = TRUE)
+
+deaths$Age = as.numeric(as.character(deaths$Age))
+deaths = filter(deaths, is.na(deaths$Age) == FALSE)
+
+years_grp = function(x) {
+  ifelse(x < 1930, "1920-1929",
+         ifelse(x<1940, "1930-1939",
+                ifelse(x<1950, "1940-1949",
+                       ifelse(x<1960, "1950-1959",
+                              ifelse(x<1970, "1960-1969",
+                                     ifelse(x<1980, "1970-1979",
+                                            ifelse(x<1990, "1980-1989",
+                                                   ifelse(x<2000, "1990-1999",
+                                                          ifelse(x<2010, "2000-2009",
+                                                                 ifelse(x<2020, "2010-2019",
+                                                                        ifelse(x<2030, "2020-2029",
+                                                                               ifelse(x<2040, "2030-2039"))))))))))))
+}
+
+deaths$YrGrp = years_grp(deaths$Year)
+
+#multiplot func
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+```
+
+# Introduction
+
+## Background
+
+The term mortality rate is typically used to refer to the proportion of the number of deaths that have occurred in a population in relation to the size of the population within a given time period. The importance of being able to understand, model and forecast mortality rates within a population has inspired the production of this project. Acknowledging past, present and future changes in mortality plays a vital role in decision making in areas such as public health, the insurance industry and government.
+
+Drawing inference in the analysis of mortality rates can allow for extremely signifcant conclusions to be made. For example: the mortality rate of a population with a specific disease can enable inference to be made on the probability of surviving the disease. The importance in the analysis of mortality is undeniable and, therefore, it is vital that statistical modellling of mortality can be considered reliable and accurate. 
+
+An inspiration of the project is the ongoing COVID-19 pandemic. The current pandemic has indicated the important nature of mortality modelling for both business and government applications. A pandemic is often considered an anomaly within mortality modelling. However, a concequence of the pandemic will be the increase in attention surrounding mortality in many business and government sectors.  
+
+Stochastic models are a form of mathematical model which can consider various scenarios given an inital condition.[@nature] Stochastic models are often associated with Monte-Carlo simulation. This is a beneficial feature for a project of this nature because simulation enables the potential to forecast and predict unknown values. This project specifically focuses on the stochastic model known as the Lee-Carter model. 
+
+## Project Structure and Aims
+
+Mortality rates can be used to estimate the life expectancy of a population. The Lee-Carter model is a commonly used stochastic model to understand and forecast life expectancy in actuarial applications. The first aim of this project is to gain an understanding of life expectancy in the United Kingdom (UK) by creating and applying the Lee-Carter model.
+
+The UK has an estimated population of approximately 68 million people with the median age in the UK being 40.5 years old.[@pop] The UK is made up of many local areas (cities, towns, villages, etc) and the age distribution within each of these local areas varies within these communities.[@age] The Lee-Carter model has traditionally been used to analyse life expectancy at a national level. Furthermore, the next aim of this project is to adapt the Lee-Carter model to incorporate local area, instead of age, against time. This adaptation of the Lee-Carter model will create an idea of the extent to which different local areas have impacted national mortality.      
+
+The final aim of the project is to propose an further adaptation to the Lee-Carter model to consider all variables: age, local area and time. This proposal will be applied to UK mortality data alongside the original Lee-Carter model. The purpose of this proposal will be to improve the accuracy of the original stochastic model and potentially be a better predictor of mortality. 
+
+To summarise the aims of this project:
+
+1) Understanding and applying the Lee-Carter model to UK mortality data.
+
+2) Adapting the Lee-Carter model to incorporate local areas within the UK rather than age groups.
+
+3) Proposing, testing and applying an extension to the Lee-Carter model to consider age, time and local area. 
+
+The aims of the project exist to provide direction in terms of the structure of this report. Each section of the report will refer to an aim, with the anticipation of methodically fulfilling each aim throughout the report. 
+
+## Literature Review
+
+Each section of the project concentrates on one of the three aims of the project. The first aim looks at applying the Lee-Carter model which was proposed by Lee and Carter in 1992, which is a commonly used stochastic model for mortality modelling. The mathematical foundations of the Lee-Carter model are present in each of the sections of the report. The basic concepts, understanding and assumptions behind the Lee-Carter model are stated in a variety of papers. The 'Understanding the Lee-Carter Mortality Forecasting Method' (Federico Girosi and Gary King; 2007) and 'Actuarial Mathematics for Life Contingent Risks' (David C. M. Dickson, Mary R. Hardy and Howard R. Waters; 2019) both outline similar methodology for the framework and assumptions in the Lee-Carter model. Princeton University's report of Lee-Carter modelling[@pton] (2017) presents similar methods for estimation (singular value decomposition), modelling and forecasting (Monte-Carlo Markov Chain) to the approaches throughout the project. This article also applies the Lee-Carter model to life table data (US data rather than UK) from the Human Mortality Database. 
+
+The second aim involved an adaptation to the Lee-Carter model for United Kingdom mortality that incorporates local areas. The adaptation to the Lee-Carter model was an original approach that built upon the Lee-Carter model and was devised through the assumptions of the Lee-Carter model. The third aim is met though using a classification tree approach to build upon and extend the Lee-Carter model. This was another original approach based on the assumptions and methodology of the Lee-Carter model. 'A random forest algorithm to improve the Lee–Carter mortality forecasting: impact on q-forward' (Susanna Levantesi & Andrea Nigri) looks at applying a random forest algorithm to improve the Lee-Carter model, although this approach involves using decision trees for forecasting whilst the approach in this paper applies classification trees in the modelling stage.  
+
+# The Lee-Carter model applied to United Kingdom life tables
+
+## The Lee-Carter model
+
+The Lee-Carter model is a stochastic longetvity model which was derived through the work of Ronald D. Lee and Lawrence Carter in the modelling and forecasting of US mortality over 30 years ago. The Lee-Carter model is commonly used by actuaries for life expectancy forecasting in insurance/ pension pricing applications.
+
+The Lee-Carter model focuses on the central death rate, denoted $m_x$, rather than the standard mortality rate calculation (number of deaths divided by population). The central death rate represents the average number of deaths each year at age x last birthday in the relevant time period, divided by the average population at that age over the same period.[@mx]
+
+An assumption of the Lee-Carter model is that the central death rate varies by both age $x$ and time $t$. Therefore, we consider the central death rate as a function of both age and time - denoted $m_{xt}$.
+
+The formula for the Lee-Carter model is as follows:
+\[
+log(m_{xt}) = \alpha_x + \beta_x K_t + \epsilon_{xt}
+\]
+where $\alpha_x$ is the force of mortality at each age group $x$, $\beta_x$ represents the change in mortality for each age group $x$, $K_t$ is the trend in mortality over time $t$ and $\epsilon_{xt}$ is the error value.
+
+## Descriptive analysis of data
+
+In order to gain an understanding of the Lee-Carter model we can apply the model to UK life tables. UK life tables are publicly available in the Human Mortality Database (HMD)[@HMD]. The UK life table contain the central death rate $m_{xt}$ for each age from 1922 to 2018 with seperate tables for both males and females.
+
+The life table contain 3 columns of interest: year ($t$), age ($x$) and central death rate ($m_{xt}$). The Lee-Carter model is in terms of $log(m_{xt})$, whilst the UK life table data provides central death rate $m_{xt}$. Therefore, the logarithm of each $m_{xt}$ value is taken.
+
+A general understanding of the relationships and trends between $log(m_{xt})$, age $x$ and year $t$ can be examined through looking at figures 1 and 2. 
+
+```{r Year_mx, echo=FALSE, fig.height=4, fig.width=10, warning  = FALSE}
+ggplot(filter(deaths, Age<=109), aes(Age, log(mx), group = Year, color = as.factor(YrGrp))) +geom_line() + ggtitle("Figure 1: Change in log(mxt) by age in each year (1920-2019) displayed by decade") +labs(color = "Decade") + scale_colour_brewer(palette = "Greens", na.value = "black")
+```
+
+Figure 1 shows a sharp decrease in $log(m_{xt})$ from ages 0 to 9, this decrease is present in all years - this suggests that there is a significantly higher levels of infant mortality in comparison to childhood mortality in the UK. The sharp decrease in $log(m_{xt})$ is followed by a steady increase from ages 10 to 109. Between ages 15 and 30 there seems to be an increase in the rate of growth of $log(m_{xt})$, with a higher rate of growth that ends at an earlier age in the more recent years and a relatively lower increase in the rate of $log(m_{xt})$ growth in the earlier years with the growth period being slightly longer.  
+
+Another aspect which can be observed from figure 1 is the general decline in $log(m_{xt})$ over time, this is displayed through the consistent decrease in $log(m_{xt})$ as the decade observed increases. Figure 1 also displays a high spread of $log(m_{xt})$ values within younger age groups, this spread decreases as age increases and there is a relatively small spread of $log(m_{xt})$ within in the older ages. This indicates that $log(m_{xt})$ decreases over time and the rate of decline decreases as age increases.          
+
+```{r Year_mx_v2, echo=FALSE, fig.height=4, fig.width=10,warnings = FALSE, message=FALSE}
+temp1 = 
+  deaths %>% 
+  #filter(Age <= 75) %>%
+  group_by(Year) %>%
+  summarise(lnmx = mean(log(mx))) %>%
+  select(Year, lnmx)
+
+ggplot(temp1, aes(Year, lnmx))  + 
+  #geom_smooth(color = "dark grey", lty=2)+
+  geom_line(color = "red", size=1) + geom_point(size = 1)  +
+  ggtitle("Figure 2: Average log(mx) each year for all ages")
+
+```
+
+The indication from figure 1 that $log(m_{xt})$ decreases over time is reinforced in figure 2. Figure 2 displays a clear negative correlation between average $log(m_{xt})$ and year. There seems to be slightly higher variation of $log(m_{xt})$ in the earlier years compared to the later. Figure 2 also provides an idea of what the trend of mortality over time, $K_t$, will look like in a Lee-Carter model.    
+
+## Estimation of variables
+
+In order to fit the Lee-Carter model using the UK life table data, values for $\alpha_x$, $\beta_x$ and $K_t$ need to be estimated. 
+
+$\alpha_x$ represents the average $log(m_x)$ at each age. This therefore implies that $\alpha_x$ can be estimated by taking the sum of all $log(m_x)$ values at age $x$ and dividing this by total number of years observed (defined $n_t$):
+
+\[
+\alpha_x = \frac{\sum_{t=1}^{n_t} log(m_{xt})}{n_t}
+\]
+where $\alpha_x$ is the estimate for $\alpha$ at age $x$ and $n_t$ represents the number of observed years. 
+
+Taking the average value of $log(m_{xt})$ for each age in the UK life table, an estimate of $\alpha_x$ can be observed. Figure 3 displays the value of $\alpha$ at each age $x$:
+
+```{r value_composition, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4}
+
+## ax
+deaths$lnmx = log(deaths$mx)
+
+ax = 
+  deaths %>%
+  group_by(Age) %>%
+  summarise(summx = sum(lnmx))
+
+ax$ax = ax$summx / nlevels(as.factor(deaths$Year))
+
+ggplot(data = ax, aes(Age, ax))+geom_line(size=1) +geom_point() + ggtitle("Figure 3: Estimated value for alpha at each age")
+```
+
+Figure 3 shows that $\alpha_x$ follows a similar trend to $log(m_x)$ in figure 2; there is a relatively large decrease from ages 0-9 followed by a constant increase from age 10 onwards, with a slight increase in rate of growth after age 15 which flattens out around age 20.
+
+Estimations for both $\beta_x$ and $K_t$ cannot be obtained through the same process as $\alpha_x$. $\beta_x$ and $K_t$ appear in the Lee-Carter model as a product. By rearranging the formula for $log(m_{xt})$ in the Lee-Carter model, a formula for $\beta_x K_t$ can be derived:
+
+\[
+\beta_x K_t = log(m_{xt}) - \alpha_x - \epsilon_{xt}
+\]
+
+The product of $\beta_x$ and $K_t$ is approximately equal to $log(m_{xt})$ subtracted by $\alpha_x$. Furthermore, through subtracting the previously calculated values of $log(m_{xt})$ and $\alpha_x$, an estimate of the product $\beta_x K_t$ is obtained. The product $\beta_x K_t$ exists in a matrix where the ages, $x = (0,1,...,109)$, are the rows and years, $t = (1920, 1921,...,2019)$, are the columns.
+
+This creates an estimate of the product of $B_x K_t$. However, this matrix needs to be split into individual matrices in order to gain individual estimates for each $B_x$ and $K_t$.  
+
+Singular value decomposition (SVD) is a method which allows a matrix $A$ to be factorised into three seperate matrices[@SVD]:
+
+\[
+A = USV^T
+\] where matrices $U$ and $V$ are orthonormal matrices and the matrix $S$ is a diagonal matrix with positive real values[@SVD].
+
+Singular value decomposition (SVD) can be used to obtain the optimal lower-rank value approximation to matrix $A$. Taking the first column vector of $U$, the first row vector of $V$ and the first entry in the diagonal matrix $S$, optimal lower rank values for $U$, $V$ and $S$.[@pton] 
+
+Applying SVD to the matrix of $\beta_x K_t$ and taking the optimal lower-rank value approximation, the following form of $\beta_x K_t$ is obtained: 
+\[
+\beta_x K_t = S_{(1,1)} u_{(x,1)} v_{(1,t)}
+\]
+where $S_{(1,1)}$ (a constant) is the first value from the diagonal matrix $S$, $u_x$ is the first column in the matrix u and $v_t$ is the first row of the matrix $v$.
+
+This form of $B_x K_t$ produced through SVD enables recognition that $u_x$ is an estimate for $\beta_x$ and the product $S_1 v_t$ is an estimate of $K_t$. All values of $v_t$ will also be directly proportional to $K_t$ as $S_1$ is a constant. This implies that also future values for $v_t$ will be directly proportional to $K_t$, this creates the potential of forecasting of $log(m_{xt})$ as $K_t$ is the only variable in terms of time $t$ in the formula for $log(m_{xt})$.
+
+An assumption behind the estimation of variables in the Lee-Carter model is that $\alpha$ and $\beta$ are considered as constants over time. Whilst, $K$ is considered as a random variable where the step size is normally distributed with mean $\mu$ (drift) and variance $\sigma$ (volatility).[@axbx] Furthermore, if $\mu$ is negative then $K$ tends to decrease meaning that central death rate will follow a general decrease over time. $\sigma$ represents the the volatility from year to year and will impact the size of the change each year. 
+
+another cite for svd:
+https://www.sciencedirect.com/topics/engineering/singular-value-decomposition
+
+Applying SVD to the estimate for $\beta_x K_t$:
+
+```{r kxbx, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height = 4}
+
+## k and bx
+Mtrx = matrix(ncol= nlevels(as.factor(deaths$Year)),nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(Mtrx) = levels(as.factor(deaths$Year))
+rownames(Mtrx) = levels(as.factor(deaths$Age))
+
+for(i in 1922:2018){
+  for(j in 0:109){
+      Mtrx[j+1,i-1921] = (filter(deaths, Year == i & Age == j)$lnmx[1]) - (filter(ax, Age == j)$ax)  
+  }
+}
+
+svd_mtrx = svd(Mtrx)
+
+ux = svd_mtrx$u[,1]
+vt = svd_mtrx$v[,1]
+
+#vt = vt 
+#ux = ux 
+d = svd_mtrx$d[1]
+
+temp2 = 
+  deaths %>% 
+  filter(Age <= 75) %>%
+  group_by(Age) %>%
+  summarise(mx = mean(mx)) %>%
+  dplyr::select(Age, mx)
+
+
+par(mfrow = c(1,2))
+plot(0:109, ux, main = "Figure 4: ux (left) and vt (right)", xlab = "Age")
+plot(temp1$Year, vt, main ="vt", xlab = "Year")
+
+
+# log(mx) = ax + (ux*vt) + sum()  
+fitted_lnmx = matrix(ncol= nlevels(as.factor(deaths$Year)),nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(fitted_lnmx) = levels(as.factor(deaths$Year))
+rownames(fitted_lnmx) = levels(as.factor(deaths$Age))
+
+for(i in 1922:2018){
+  for(j in 0:109){
+      fitted_lnmx[j+1,i-1921] = (filter(ax, Age == j)$ax) + (d*ux[j+1]*vt[i-1921])
+  }
+}
+
+new_fit = melt(fitted_lnmx)
+
+colnames(new_fit) = c("Age","Year", "Fitted")
+
+new_fit = cbind(new_fit,"Actual" =deaths$lnmx)
+
+```
+
+Figure 4 displays both $u(x)$ and $v(t)$. Interestingly, $v(t)$ generally increases as year increases, which is the opposite of what is expected from the previous descriptive analysis of figure 2. Observing figure 4, it can be noticed that $u(x)$ is negative for all $x$. This will therefore reverse the relationship of $v(t)$ which aligns with the assumption made from looking at figure 2.  
+
+Figure 4 highlights a feature of SVD as it approximates $v(t)$ as a normally distributed variable with mean 0, this can be observed through the rough symmetry around 0. This enables  the Monte-Carlo simulation of $v(t)$ to be a very simple process. 
+
+## Analysis of Lee-Carter estimated values of Central Death Rate
+
+Through substituting estimates for $\alpha_x$, $S_1$, $u(x)$ and $v(t)$, an estimate for $log(m_{xt})$ can be formed:
+\[
+log(m_{xt}) = \alpha_x + (S_1 u(x) v(t))
+\]
+
+These estimates of $log(m_{xt})$ are the fitted values of the Lee-Carter model, and can be compared against the actual value of $log(m_{xt})$ to evaluate the performance of model.
+
+```{r lnmx_fit_1, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height = 4}
+#ggplot(new_fit, aes(Fitted,Actual,  color = Age)) +geom_point(size=0.1)
+temp2 = 
+  new_fit %>% 
+  #filter(Age <= 75) %>%
+  group_by(Year) %>%
+  summarise(lnmx = mean(Fitted)) %>%
+  dplyr::select(Year, lnmx)
+
+ggplot(temp2, aes(Year, lnmx))  + 
+  #geom_smooth(color = "dark grey", lty=2)+
+  geom_line(aes(color = "Fitted"))+ geom_line(aes(x=temp1$Year, y = temp1$lnmx, color = "Actual")) +
+  ggtitle("Figure 5: Average log(mx) each year for all ages")
+```
+
+Figure 5 shows the average actual and fitted $log(m_x)$ for all ages in each year. This allows recognition of which years are generally under/ over fitted.  
+
+An understanding of the error value of the Lee-Carter model can be gained by comparing the the original values of $log(m_x)$ from the life table with the estimated values from the model. Figure 6 shows a heat map of the difference in the actual and fitted values of $log(m_x)$.     
+
+```{r Analysis_of_fit, eval=TRUE, echo=FALSE, fig.width=10, fig.height=5}
+
+actual_lnmx = select(deaths, Year, Age, lnmx)
+#DifferenceInFits = (Mtrx - fitted_lnmx)
+
+DifferenceInFits = melt(fitted_lnmx)
+DifferenceInFits = cbind(actual_lnmx, "fitted" = DifferenceInFits$value)
+
+DifferenceInFits$Difference = DifferenceInFits$lnmx - DifferenceInFits$fitted
+
+#colnames(DifferenceInFits) = c("Age","Year", "Difference")
+
+ggplot(DifferenceInFits, aes(Year,Age, fill= Difference)) +   geom_tile() +
+  scale_fill_gradient2(low=("blue"), mid= "white",high=("red")) +
+  ggtitle("Figure 6: Heat map showing the difference in Actual and Fitted values of log(mx)")
+
+```
+
+The heat map shows which ages and years have been under/ over fitted. 
+
+From 1920 until 1938, newborn mortality has been overfitted, there does not seem to be much fitting error for childhood mortality, ages between 28 to 45 have been over fitted older ages and ages older than 45 are generally under fitted. 
+
+There is a large cluster during 1939 to 1945 between ages 20 and 35 in which $log(m_x)$ has been underestimated. This is actually expected as this period covers World War 2 which can be considered an anomalous period.
+
+Conversely from the earlier years, from 1945 until 1990 there is generally underfitting in ages 20 to 40 and overfitting in ages over 45. This reverses again from around the year 2000, ages 15-40 are generally overfitted and ages above 45 are underfitted. 
+
+The diagonal lines that are present in the chart suggest that $log(m_x)$ is subject to the cohort effect. This is interesting because it implies that there might be a lingering impact on $log(m_x)$ from the year that a person is born. This defies the assumption that the year that a person is born does not have an effect on $log(m_x)$ which is made in the Lee-Carter model.  
+
+A sense of the distribution of the error can be gained by plotting a histogram of these differences. This is shown in figure 6. 
+
+```{r hist_error, eval = TRUE, echo = FALSE, fig.width=10, fig.height=4}
+
+ggplot(DifferenceInFits, aes(Difference)) +geom_histogram(color = "black",fill="orange", alpha = 0.25, bins= 10) + geom_density(aes(y=.1*..count..), colour="black", adjust=7, size =1) + ggtitle("Figure 7: Histogram of difference in fit of actual and fitted values of log(mx)") + geom_vline(xintercept = mean(DifferenceInFits$Difference), lty = 3)
+
+qqnorm(DifferenceInFits$Difference, main = "Figure 8: Normal Q-Q Plot for difference in fits of log(mxt)")
+ 
+```
+
+Figure 6 suggests that the error of the Lee-Carter model follows a normal distribution with mean approximately 0. The standard deviation can also be calculated through the formula : $\sigma = \frac{\sqrt{\sum_{i=1}^N(x_i - \mu)}}{N}$
+
+The standard deviation of the sample is `r round(sd(DifferenceInFits$Difference),2)` (2 d.p.). Furthermore, we can conclude that the error value is distributed:
+
+\[
+\epsilon_{xt} \sim N(0, 0.15^2)
+\]
+
+## Monte-Carlo simulation for v(t)
+
+A Monte-Carlo simulation is a term used to describe repeated random sampling in order to obtain values that are not in the sample. A Markov Chain is a type of Monte-Carlo simulation that simulates a random walk through a probability distribution in order to predict future results.    
+
+A Markov Chain Monte-Carlo simulation can be used to forecast future values for $v(t)$. Values for both $u(x)$ and $\alpha_x$ are not dependent on time $t$, therefore by forecasting future values of $v(t)$ then allows estimation of future values of $\beta_x K_t$. More importantly, estimation of future values of $\beta_x K_t$ and usage of the previously estimated $\alpha_x$ allows estimation of future values of $log(m_{xt})$. This forecasting process is made viable through the assumption in the Lee-Carter model that $\alpha$ and $\beta$ values can be considered as constants over time (as mentioned previously) meaning that they do not differ for future values of $t$.    
+
+To create a Markvov-Chain Monte-Carlo simulation, a random sample is required. Assigning a new variable $D_v$: that represents the difference in $v$ at time $t$ and $t-1$ (step size) as the random sample enables simulation of the difference in $v_t$ for each future time $t$. The following formula can be used to describe $D_v$:
+
+\[
+D_v = v(t) - v(t-1)
+\]
+
+An assumption of the Lee-Carter model is that the differences in $K_t$ (step size) can be considered as a normally distributed random variable (previously mentioned). This implies that $D_v$ is also normally distributed and therefore $D_v$ can be considered: 
+
+\[
+D_v \sim N( E(d_{v}) , \sigma^2_{d_{v(t)}} ) 
+\]
+
+where $E(d_v)$ represents the expected value/ mean of $d_v$ and is calculated $\frac{\sum_{t=1}^{n_t} d_{v(t)}}{max(t_n)}$, $\sigma^2_{d_{v(t)}}$ is the variance of $d_v$ and can be calculated  $\sigma^2 = \frac{\sum_{i=1}^N(d(i) - \mu_d)}{N}$
+
+Using this distribution enables a random walk from the final time $t$ which is the year 2019 for the next $m$ years. Setting $m = 20$ produces a random walk for the next 20 years. Reproducing this process 10,000 times creates a sample of 10,000 random walks of $v(t)$ which can be visualised in figure 7: 
+
+
+```{r montecarlo, echo = FALSE, eval = TRUE, fig.width=10, fig.height=5}
+
+runs = 100000
+end_vt = vt[length(vt)]
+diff_vt = diff(vt)
+
+paths<-10000
+years<-20
+sample<-matrix(0,nrow=(years+1),ncol=paths)
+  
+for(i in 1:paths){
+  changes <- rnorm(years,mean=mean(diff_vt),sd=sd(diff_vt))
+
+		sample[1,i]<-end_vt
+		for(j in 2:(years+1))
+		{
+			sample[j,i]<-sample[j-1,i]+changes[j-1]
+		}
+}	
+	
+	sample = sample[-1,]
+	
+	par(mfrow = c(1,2))
+
+	matplot(sample,main="Figure 9: Monte-carlo simulation for v(t)",xlab="Year",ylab="v(t)",type="l")
+	
+	new_sample = vt
+	for(i in 1:(paths-1)){
+	new_sample = cbind(new_sample,vt)
+	}
+
+	new_sample = rbind(new_sample, sample)
+	
+	matplot(1922:(2018+years),new_sample,main="(Attached to actual values)",xlab="Year",ylab="v(t)",type="l")
+			
+			
+```
+
+Figure 9 shows 10,000 random walks of $v(t)$ for the next 20 years. Looking at the random walks creates an idea of the maximum and minimum values of $v(t)$ for the next 20 years but does not create an accurate impression of the most likely path of $v(t)$ over the next 20 years. Through taking all values for each year of the random walk and calculating the median and percentiles for each year allows an accurate representation of the path $v(t)$ will take over the next 20 years.
+
+## Analysis of v(t) forecast
+
+The 50th percentile (median) of each forecasted year of $v(t)$ provides an idea of the average path that $v(t)$ can take. Taking both the 5th and 95th perecentiles for each forecasted year of $v(t)$ creates a 90% confidence interval around this average path.
+
+```{r median, echo =FALSE, eval=TRUE, fig.width=10, fig.height=4}
+
+for(i in 1:years){
+  if(i ==1){
+    percentiles_df = data.frame(row.names = 1:20)
+    ordered_sample = data.frame(row.names = 1:paths)
+    ordered_sample$sample = as.numeric(sample[i,])
+    ordered_sample = ordered_sample[order(ordered_sample$sample),]
+    
+    percentiles_df$L[i] = ordered_sample[(0.05*paths)]
+    percentiles_df$M[i] = ordered_sample[(0.5*paths)]
+    percentiles_df$U[i] = ordered_sample[(0.95*paths)]
+    
+    
+  } else{
+    ordered_sample = data.frame(row.names = 1:paths)
+    ordered_sample$sample = as.numeric(sample[i,])
+    ordered_sample = ordered_sample[order(ordered_sample$sample),]
+    
+    percentiles_df$L[i] = ordered_sample[(0.05*paths)]
+    percentiles_df$M[i] = ordered_sample[(0.5*paths)]
+    percentiles_df$U[i] = ordered_sample[(0.95*paths)]
+    
+  }
+}
+
+percentiles_tbl = percentiles_df
+
+rownames(percentiles_tbl) = seq(2019, 2018+years,1)
+percentiles_tbl = round(percentiles_tbl,5)
+colnames(percentiles_tbl) = c("5th", "Median", "95th")
+
+
+percentiles_df$Year = seq(2019, 2018+years,1)
+
+  
+ggplot(data = percentiles_df, aes(x = Year, M)) +geom_line(color = "black", size = 1,lty=1) +geom_point() + geom_ribbon(aes(ymin = L, ymax = U), alpha = 0.3) + ggtitle("Figure 10: Median of v(t) shown with 5th and 95th percentile ribbon")
+
+OLD_sample = data.frame(new_sample[1:(nrow(new_sample)-years),])
+OLD_sample$Year = seq(2018-96, 2018,1)
+
+ggplot(data = percentiles_df, aes(x = Year, M)) +geom_line(color = "blue", lty=2)  + geom_ribbon(aes(ymin = L, ymax = U), alpha = 0.2) + ggtitle("Figure 11: Median of v(t) forecast with 5th and 95th percentile shown with actual data") + geom_line(data =OLD_sample, aes(x = Year,y = new_sample),lty=2)
+
+```
+
+Figure 10 and 11 indicate that $v(t)$ will follow a upwards trend for the next 20 years. The median value represents the average path that $v(t)$ will follow. The shaded region represents the area between the 5th and 95th percentiles which implies that it can be assumed with 90% certainity that the path of $v(t)$ will lie within this region. It can be observed that the interval widens as time $t$ increases, this indicates that there is a larger range of values that $v(t)$ can take with 90% certainty as time $t$ increases. These percentile values computed from the Monte-Carlo simulation can be applied to create a forecast of $log(m_{xt})$. 
+
+## Forecast of Central Death Rate
+
+Using the prior simulation of $v(t)$ values for the next 20 years, allows $log(m_{xt})$ to be estimated for the next 20 years with the following formula:
+\[
+log(m_{x(t+n)}) = \alpha_x + S_1 u(x) v(t+n) 
+\] where n represents the forecasted year subtracted by 2018 (max value of t) 
+
+```{r vtforecast2kt, eval = TRUE, echo=FALSE, message = FALSE, warning = FALSE, fig.width=10}
+
+fitted_lnmx = matrix(ncol= years,nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(fitted_lnmx) = 2019:2038
+rownames(fitted_lnmx) = levels(as.factor(deaths$Age))
+
+for(i in 2019:2038){
+  for(j in 0:109){
+      fitted_lnmx[j+1,i-2018] = (filter(ax, Age == j)$ax) + (svd_mtrx$d[1]* ux[j+1]* percentiles_df$M[i-2018])
+  }
+}
+
+new_fit = melt(fitted_lnmx)
+
+colnames(new_fit) = c("Age","Year", "lnmx")
+
+deaths_new = select(deaths, Year, Age, lnmx)
+
+FULL_TBL = rbind(deaths_new, new_fit)
+
+### Lower Percentile
+
+L_Perc = matrix(ncol= years,nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(L_Perc) = 2019:2038
+rownames(L_Perc) = levels(as.factor(deaths$Age))
+
+for(i in 2019:2038){
+  for(j in 0:109){
+      L_Perc[j+1,i-2018] = (filter(ax, Age == j)$ax) + (svd_mtrx$d[1]* ux[j+1]* percentiles_df$L[i-2018])
+  }
+}
+
+L_Perc= melt(L_Perc)
+
+### Upper Percentile
+
+U_Perc = matrix(ncol= years,nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(U_Perc) = 2019:2038
+rownames(U_Perc) = levels(as.factor(deaths$Age))
+
+for(i in 2019:2038){
+  for(j in 0:109){
+      U_Perc[j+1,i-2018] = (filter(ax, Age == j)$ax) + (svd_mtrx$d[1]* ux[j+1]* percentiles_df$U[i-2018])
+  }
+}
+
+U_Perc= melt(U_Perc)
+
+PERC_MX =  data.frame(cbind("Age" = L_Perc$Var1, "Year" = L_Perc$Var2, "L" = L_Perc$value,  "U" = U_Perc$value))
+
+temp3 = 
+  PERC_MX %>% 
+  #filter(Age <= 75) %>%
+  group_by(Year) %>%
+  summarise(L = mean(L),
+            U= mean(U)) %>%
+  select(Year, L,U)
+
+
+#Fc_lnmx_2 = cbind("Age" = seq(0, 109,1), Fc_lnmx)
+#Fc_lnmx = as.data.frame(Fc_lnmx)
+#Fc_lnmx_2 = melt(Fc_lnmx)
+#Fc_lnmx_2$Age = rep(seq(0,109,1),nrow(Fc_lnmx_2)/110)
+#Fc_lnmx_2 = select(Fc_lnmx_2, "Year" = variable, Age, "lnmx" = value)
+#deaths_new = select(deaths, Year, Age, lnmx)
+
+#deaths_new$Type = "Actual"
+#Fc_lnmx_2$Type = "Forecast"
+
+#FULL_TBL = rbind(deaths_new, Fc_lnmx_2)
+
+#ggplot(data = FULL_TBL, aes(x=Year, y=lnmx, color = Age)) +geom_line()
+
+temp2 = 
+  FULL_TBL %>% 
+  #filter(Age <= 75) %>%
+  group_by(Year) %>%
+  summarise(lnmx = mean(lnmx)) %>%
+  select(Year, lnmx)
+
+temp4 = merge(temp2, temp3, by = "Year", all.x = TRUE, all.y=TRUE)
+
+ggplot(temp4, aes(Year, lnmx))  + 
+  #geom_smooth(color = "dark grey", lty=2)+
+  geom_line(color = "red", size=1) + geom_point(size = 1)  +
+  ggtitle("Figure 12: Average log(mxt) each year for all ages with forecast") + 
+  geom_ribbon(aes(ymin =L, ymax = U), alpha = 0.2)
+
+FULL_TBL$YrGrp = years_grp(FULL_TBL$Year)
+
+#ggplot(FULL_TBL, aes(Age, lnmx, group = Year, color = as.factor(YrGrp))) +geom_line() + ggtitle("Figure 1: Change in log(mx) by age in each year (1920-2019) displayed by decade") +labs(color = "Decade") + scale_colour_brewer(palette = "Greens", na.value = "black")
+
+
+```
+
+Unsuprisingly, the forecast for $log(m_{xt})$ suggests that it will follow the same downwards trend that it has done since 1920. The shaded area around the forecasted region is the 90% signficance interval which was computed using the 5th and 95th percentiles from the $v(t)$ forecast. This region allows recognition of the range of values which $log(m_{xt})$ is most likely to fall within over the next 20 years. The surface area of the shaded interval increases as time increases (interval widens), implying that there is less certainity in the forecast as time increases. 
+
+```{r forecast_graph, eval = TRUE, echo=FALSE, message = FALSE, warning = FALSE, fig.width=10}
+ggplot(FULL_TBL, aes(Age, lnmx, group = Year, color = as.factor(YrGrp))) +geom_line() + ggtitle("Figure 13: Change in log(mx) by age in each year with forecast, displayed by decade ") +labs(color = "Decade") + scale_colour_brewer(palette = "Greens", na.value = "black")
+```
+
+$log(m_{xt})$ follows the same trend in the forecasted years than the previous years in terms of its relationship with age. There are high levels of newborn mortality, followed by low levels in childhood mortality which rapidly increases to age 18 which stays relatively constant until age 30 and then $log(m_{xt})$ continues to increase at a steady rate as age increases. As time increases the level of mortality in each age group declines which is present since the 1920s.   
+
+The results from both fitting the Lee-Carter model and forecasting allow understanding of how the Lee-Carter model works and the capabilities of the model. It can be recognised from fitting the Lee-Carter model showed that the Lee-Carter model can provide fair estimates for $log(m_{xt})$ and that a general comprehension of future values for $log(m_{xt})$ can be devised through Markov Chain Monte-Carlo simulation.
+
+# The Lee-Carter Model applied to UK mortality data by location
+
+This section will focus on the second aim of the project: adapting the Lee-Carter model to incorporate local areas within the UK rather than age groups.
+
+Now that an idea of how the Lee-Carter model is constructed and can be applied has been obtained through the previous section, the Lee-Carter model can be adjusted to consider local areas within the United Kingdom instead of age groups. The Office of National Statistics (ONS) publishes UK mortality data each year which provides the number of deaths in each Unitary Authority (UA). ONS Unitary Authorities are groupings of local authorities and are based upon groupings of city councils, borough councils, county councils, or district councils and are a general representation of the local communities in the UK.[@UA] 
+
+The data obtained for this section is a monthly mortality dataset for each Unitary Authority in 2018. The data only covers one year of mortality and therefore we consider time $t$ as intervals of one month. A limitation of the data that was not present in the data used in the previous section is the limited number of time intervals (12 months rather than the 97 years of data) and additionally monthly data is often subject to seasonality. However, the aim of this section is to gain an understanding of how the Lee-Carter model can be adapted to incorporate local areas instead of age. Furthermore, these factors should not be considered an issue but instead acknowledged when analysing the results of the model.
+
+The ONS provides population statistics for each Unitary Authority in the UK with populations estimated from the UK census. The population estimates for 2018 are also used within this section.[@onspop]
+
+NOTE: ONS datasets did not link for two unitary authorities due to boundary changes and redefinitions of the geographies during the period in which the different datasets have been extracted. Therefore, Hertfordshire has been excluded from map visualisations and Bournemouth has been excluded entirely.
+
+## Descriptive analysis of data
+
+Using ONS data allows geographic visualisation of UAs through spatial plots using ONS published shape files. These shape files can be read by R and adjusted accordingly to produce geo-spatial plots. 
+
+Below displays a heat map of the number of deaths within 2018 in each UA:
+
+```{r Loc_Data, echo=FALSE, fig.height=4, message=FALSE, warning=FALSE, message = FALSE}
+
+loc_data = read_csv("ONS_Deaths_Location_2018_2.csv")
+pop_data = read_csv("ONS_Populations.csv")
+loc_tbl = melt(loc_data)
+
+loc_tbl = rename(loc_tbl, "Month" = variable)
+loc_tbl = rename(loc_tbl, "Deaths" = value)
+
+loc_tbl$Month = as.Date(loc_tbl$Month, tryFormats = "%d/%m/%Y")
+loc_tbl$Month = months(loc_tbl$Month)
+
+loc_tbl$Year = 2018
+
+summary_deaths =
+  loc_tbl %>% 
+  group_by(`Area Code`,Location) %>%
+  summarise(Deaths = sum(Deaths))
+
+```
+
+```{r map_setup, eval=TRUE, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, cache =TRUE, fig.height=8, fig.width=7}
+
+shpla =readOGR(dsn="C:/Users/z-laptop/Documents/Boundaries/Counties_and_Unitary_Authorities__December_2017__Boundaries_UK.shp", verbose = FALSE)
+
+shpla =  spTransform(shpla, CRS("+proj=longlat +datum=WGS84"))
+
+shpla@data$id = rownames(shpla@data)
+shpla.points = fortify(shpla, region = "id")
+shpla= merge(shpla.points, shpla@data, by = "id")
+
+la = merge(as.data.frame(shpla), summary_deaths, by.x = "ctyua17cd", by.y = "Area Code", all.x=FALSE)
+map_datt <- get_stamenmap( bbox = c(left = -6.2, bottom = 49, right = 2, top = 56))
+
+la=la[order(la$order),]
+
+library(RColorBrewer)
+###no background map##
+##ggplot(data = la, aes(x =long.x, y=lat.x,group=group, fill = Deaths)) +geom_polygon(color = "black") + scale_fill_gradient(low="white", high="red")
+
+ggmap(map_datt) +geom_polygon(data = la,aes(x=long.x, y=lat.x,group=group, fill = Deaths),alpha =0.8, show.legend=TRUE)+ scale_fill_gradient(low="white", high="blue") + ggtitle("Figure 14: Heat map for number of deaths in 2018")
+
+```
+
+Looking at the map (figure 14) suggests that there are no signifcant geographic clusters of multiple UAs with high numbers of deaths. There seems to be a high variation in the number of deaths within each UA as indicated by the wide range of total deaths within the year. The high range in the number of deaths in each UA suggests that the population sizes within each UAs vary. Furthermore, deaths should be considered as a rate, as it is in the Lee-Carter model, going forward to avoid population sizes affecting analysis. 
+
+### Calculation of central death rate 
+
+In the previous section the central death rate $m{xt}$ was provided in the UK life tables. The ONS mortality data for 2018 contains raw counts of mortality, therefore, the central death rate has to be calculated. Due to location being a different variable to age, the process in calculating central death rate in terms of location $L$ ($m_{Lt}$) can be adjusted to simply be:
+\[
+m_{Lt} = \frac{L_t}{n_L}
+\] 
+where $L_t$ is the number of deaths in the population in location $l$ in month $t$ and n is the population size in location $l$. 
+
+This derivation of central death rate functions due to there being no large fluctuations of deaths and population within a singular location like there is with age groups (as age groups shift as people become older). An assumption made in this process is that the population in each local area remains constant throughout the year; the relative impact of changes in the population size (through people entering and leaving the population) can be considered as negligible in this scenario. 
+
+```{r Centraldeathrate, eval = TRUE, echo =FALSE, fig.width=8, warning = FALSE, message =FALSE}
+
+for(i in 1:nrow(pop_data)){
+
+age_tbl = cbind(rownames(t(pop_data[i, 5:94])), t(pop_data[i, 5:94]))
+age_tbl = as.data.frame(age_tbl)
+age_tbl[,1] = as.numeric(age_tbl[,1])
+age_tbl[,2] = as.numeric(age_tbl[,2])
+age_tbl$freq = age_tbl[,1] * age_tbl[,2]
+
+if(i ==1){
+    a = data.frame(sum(age_tbl$freq)/ sum(age_tbl[,2]))
+    v = data.frame(sd(age_tbl[,2]))
+  } else {
+    a = rbind(a,sum(age_tbl$freq)/ sum(age_tbl[,2]))
+    v = rbind(v, sd(age_tbl[,2]))
+}
+}
+
+a$mean = a[,1]
+a$sd = v[,1]
+pop_data1 = pop_data[,1:4]
+pop_data1 = cbind(pop_data1,"mean" = a$mean, "sd" = a$sd)
+
+pop_data1$variational_coef = pop_data1$sd / pop_data1$mean   
+
+pop_loc = merge(loc_tbl, pop_data1, by.x = "Area Code", by.y = "Code", all.x = TRUE)
+
+pop_loc$mx = pop_loc$Deaths / pop_loc$`All ages`
+
+### for map
+pop_mx_year = 
+  pop_loc %>%
+  group_by(`Area Code`, `Location`) %>%
+  summarise(mx = sum(Deaths) / mean(`All ages`))
+###
+
+pop_gg = 
+  pop_loc %>% 
+  select(Location, Month, mx)
+
+pop_gg$Month = factor(pop_gg$Month, levels = month.name)
+boxplot(data = pop_gg, mx ~ Month, main = "Figure 15: Boxplot to show central death rate over time by UA")
+
+pop_loc$lnmx = log(pop_loc$mx)
+
+
+#START AGAIN using DEC 17
+#
+#MX_LOC[,1] = (loc_data[,3]+ loc_data[,4])/2
+#
+
+```
+
+The boxplot suggests that the highest levels of mortality in each UA is usually seen in January and that $m(x)$ follows a general downwards trend until the mortality rate reaches its lowest level in September before increasing and remaining relatively constant from October through till December. A fair assumption to be made is that mortality is generally higher in winter compared to summer. This chart also creates an idea of what $K_t$ (the trend in mortality over time) will look like in the model.    
+
+```{r map_mx, eval=TRUE, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, cache =TRUE, fig.height=6, fig.width=7}
+
+la = merge(as.data.frame(shpla), pop_mx_year, by.x = "ctyua17cd", by.y = "Area Code", all.x=FALSE)
+
+la=la[order(la$order),]
+
+ggmap(map_datt) +geom_polygon(data = la,aes(x=long.x, y=lat.x,group=group, fill = mx),alpha =0.8, show.legend=TRUE)+ scale_fill_gradient(low="white", high="red") + ggtitle("Figure 16: Heat map for Central Death Rate by ONS Unitary Authority in 2018")
+
+```
+
+Observing the heat map for $m_{lt}$ in the UK by Unitary Authority, it is noticable UAs in the North/ midlands of Wales do seem to have higher central death rates and UAs in London and surrounding areas have lower central death rates compared to the rest of England. However, there is no strong evidence of geographical significance between central death rates and UAs. 
+
+## The Lee-Carter model with local area instead of age
+
+In the Lee-Carter model, age $x$ is considered as a categorical variable (unordered) rather than a numerical variable as an assumption of the model is that $log(m_{xt})$ can differ for each age $x$ and time $t$. This suggests that location $L$, another unordered categorical variable, can be substituted for $x$.
+
+Replacing the age group $x$ variable with location $L$ in the Lee-Carter results in no changes to the derivation of the logarithm of central death rate:
+\[
+log(m_{Lt}) = \alpha_L + \beta_L K_t + \epsilon_{Lt}
+\] where $\alpha_L$ is the force of mortality in each location, $\beta_L$ is the change in mortality from each location and $K_t$ is the trend in mortality over the year (by month). 
+
+## Estimation of variables
+
+The estimation of $\alpha_L$ is similar to the estimation of $\alpha_L$ in the original Lee-Carter model. $\alpha_L$ is the force of mortality in each UA rather than age group, therefore the formula is adjusted is adjusted to incorporate location instead of age:
+
+\[
+\alpha_L = \frac{\sum_{t=1}^{n_t} log(m_{Lt})}{n_t}
+\]where $log(m_{Lt})$ is the sum of the log of central death rate for each year in each location in month $t$ and $n_t$ is the length of the time period, therefore 12 (months) in this instance.  
+
+The estimation of $\beta_L$ and $K_t$ also follow the same process as the estimation of $\beta_x$ and $K_t$ with location $L$ replacing age $x$:
+\[
+log(m_{Lt}) - \alpha_{L} = \beta_{L} K_{t} = S_{1} u(L) v(t)
+\] 
+
+```{r alpha_est, eval=TRUE, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, cache =TRUE, fig.height=6, fig.width=7}
+## aL
+ax = 
+  pop_loc %>%
+  group_by(`Area Code`, Location) %>%
+  summarise(sumlnmx = sum(lnmx))
+ax$ax = ax$sumlnmx / nlevels(as.factor(pop_loc$Month))
+
+la = merge(as.data.frame(shpla), ax, by.x = "ctyua17cd", by.y = "Area Code", all.x=FALSE)
+
+la=la[order(la$order),]
+
+ggmap(map_datt) +geom_polygon(data = la,aes(x=long.x, y=lat.x,group=group, fill = ax),alpha =0.8, show.legend=TRUE)+ scale_fill_gradient(low="white", high="darkgreen") + ggtitle("Figure 17: Heat map for estimated value of alpha")
+
+```
+
+The map above visualises the $\alpha_L$ value for each location. The map plots for both the estimate of $\alpha_L$ and $m_L$ suggest a very strong correlation - which is as expected as $\alpha_L$ is a function of $m_L$. Figure 17 also provides an initial indication to the variety within the model.   
+
+The process for estimating $K_t$ and $\beta_L$ is the method as the original Lee-Carter model too; the matrix $B_L K_t$ can be factorised into three matrices, $u(L)$, $v(t)$ and $S_1$, through SVD.
+
+```{r vals_loc_mx, eval = TRUE, echo=FALSE, warning =FALSE, message=FALSE}
+
+## k and bx
+Mtrx = matrix(ncol= nlevels(factor(pop_loc$Month, levels = month.name)),nrow = nlevels(as.factor(pop_loc$Location)))
+colnames(Mtrx) = levels(as.factor(pop_loc$Month))
+rownames(Mtrx) = levels(as.factor(pop_loc$Location))
+
+
+for(i in 1:12){
+  for(j in 1:173){
+      Mtrx[j,i] = (filter(pop_loc, Month == levels(factor(pop_loc$Month, levels=month.name))[i] & Location == ax$Location[j])$lnmx[1]) - ax$ax[j]  
+  }
+}
+
+
+Mtrx = Mtrx[rowSums(is.na(Mtrx[ , 1:12])) == 0, ]
+
+
+## sort data before doing next
+svd_mtrx = svd(Mtrx)
+
+ux = svd_mtrx$u[,1]
+vt = svd_mtrx$v[,1]
+
+#vt = vt / sum(ux)
+#ux = ux / sum(ux)
+#tmp8 = as.data.frame(cbind("Location" = rownames(Mtrx), ux))
+
+#ggplot(tmp8, aes(x = Location, y = ux)) + geom_col() +coord_flip()
+
+ux_la = data.frame(cbind(factor(rownames(Mtrx)), (ux)))
+ux_la[,1] = rownames(Mtrx)
+colnames(ux_la) = c("Location", "ux")
+#barplot(ux, main = "Estimated values for u(x)")
+
+
+barplot(vt, names.arg = month.abb, ylab = "v(t)", main = "Figure 18: Estimated values for v(t)")
+
+temp2 = 
+  pop_loc %>% 
+  filter(is.na(lnmx) == FALSE) %>%
+  group_by(Location) %>%
+  summarise(lnmx = mean(lnmx)) %>%
+  select(Location, lnmx)
+
+#plot(ux)
+
+############# log(mx) = ax + (ux*vt) + sum()  
+
+fitted_lnmx = matrix(ncol= 12,nrow = nrow(Mtrx))
+
+colnames(fitted_lnmx) = month.name
+rownames(fitted_lnmx) = rownames(Mtrx)
+
+for(i in 1:nrow(fitted_lnmx)){
+  for(j in 1:12){
+      fitted_lnmx[i,j] = (filter(ax, Location == rownames(fitted_lnmx)[i])$ax) + (svd_mtrx$d[1]*ux[i]*vt[j])
+  }
+}
+
+new_fit = melt(fitted_lnmx)
+
+colnames(new_fit) = c("Location","Month", "Fitted")
+
+new_fit = merge(new_fit, pop_loc, by = c("Location", "Month"), all.x=TRUE)
+
+#new_fit = cbind(new_fit,"Actual" =deaths$lnmx)
+
+temp6 = 
+  new_fit %>%
+  group_by(Location) %>%
+  summarise(lnmx = mean(lnmx),
+            Fitted = mean(Fitted))
+
+#ggplot(temp6, aes(lnmx,Fitted, color = Location)) +geom_point(size=0.1) + theme(legend.position = "none")
+
+
+
+#plot((new_fit$Fitted-new_fit$lnmx), type = "h", main = "Fitted - Actual values")
+#abline(h=0)
+
+```
+
+$v(t)$ follows a general upwards trend from January to September. Then dips to approximately 0 in October and slightly increases each month until December. The clear trend shown by the $v(t)$ curve indicates that there $log(m_L)$ is subject to monthly seasonality. This is not an issue with yearly data but will restrict the forecasting potential of this model. 
+
+```{r ux_est, eval=TRUE, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, cache =TRUE, fig.height=6, fig.width=7}
+#ux
+lau = merge(as.data.frame(shpla), ux_la, by.x = "ctyua17nm", by.y = "Location", all.x=FALSE)
+
+lau=lau[order(lau$order),]
+
+ggmap(map_datt) +geom_polygon(data = lau,aes(x=long.x, y=lat.x,group=group, fill = ux),alpha =0.8, show.legend=TRUE)+ scale_fill_gradient(low="white", high="orange") + ggtitle("Figure 19: Heat map for estimated value of u(L) for each ONS Unitary Authority")
+
+```
+
+$u(L)$ represents the change in $log(m_{Lt})$ in any given month for each location. The heat map for the $u(L)$ value in each location shows little correlation with the previous heat maps for $\alpha$ and $m_L$.   
+
+## Fitting the model
+
+The estimated values can now be used to calculate fitted values for $log(m_{Lt})$ using the formula:
+\[
+log(m_{Lt}) = \alpha_{L} + S_{1}u(L)v(t)
+\]
+
+This allows comparison of the actual and fitted values for $log(m_{Lt})$:
+
+```{r month_split, eval = TRUE, echo=FALSE, warning =FALSE, message=FALSE}
+ggplot(new_fit, aes(lnmx,Fitted, color = Month)) +geom_point(size=0.2) + 
+  ggtitle("Figure 20:  Actual values vs fitted log(mLt) displayed by month") + xlab("Log(mLt)")#+ theme(legend.position = "none")
+```
+  
+Figure 20 shows the fitted $log(m_{Lt})$ values against the actual values for $log(m_{Lt})$. There are visible clusters of months with the earlier months (January to March) taking higher values for both fitted and actual $log(m_{Lt})$ and the later months (October to December) taking lower values. Also noticable is a higher variation within the later months than the earlier months. This indicates that the model is better at fitting in these earlier months. Furthermore, figure 20 reinforces the issue of seasonality present in using time $t$ as periods of months as there is seasonal differences in the values of $log(m_{Lt})$ and the variation of fits.    
+
+```{r Analysis_of_fit_part2, eval=TRUE, echo=FALSE, fig.width=12, fig.height=12}
+
+actual_lnmx = select(pop_loc, Location, Month, lnmx)
+#DifferenceInFits = (Mtrx - fitted_lnmx)
+
+fted_melt = melt(fitted_lnmx)
+#DifferenceInFits = cbind(actual_lnmx, "fitted" = DifferenceInFits$value)
+
+colnames(fted_melt) = c("Location", "Month", "Fitted")
+
+DifferenceInFits = merge(actual_lnmx, fted_melt, by = c("Location", "Month"))
+
+DifferenceInFits$Difference = DifferenceInFits$lnmx - DifferenceInFits$Fitted
+
+DifferenceInFits$Month = factor(DifferenceInFits$Month, levels = month.name)
+
+#colnames(DifferenceInFits) = c("Age","Year", "Difference")
+
+ggplot(DifferenceInFits, aes(Month,Location, fill= Difference)) +   geom_tile() +
+  scale_fill_gradient2(low=("blue"), mid= "white",high=("red")) +
+  ggtitle("Figure 21: Heat map showing the difference in Actual and Fitted values of log(mx)") +
+  theme(axis.text=element_text(size=6))
+
+```
+
+The difference between the actual and estimated values for $log(m_{Lt})$ are visualised in figure 21. The City of London shows significantly higher differences between the actual and fitted $log(m_{Lt})$ values. A clear issue present that limits analysis the difference in fits is the large number of UAs being analysed and the lack of clear relationships that can be analysed from using location instead of age in the model. 
+
+The average value for the residuals is `r mean(DifferenceInFits$Difference)` which suggests that, although the model has its flaws, it can produce an acceptable fit for $log(m_{Lt})$.
+
+The large number of unitary authorities in the UK creates the idea that there are relatively low population sizes in each UA. Which may potentially be decreasing the accuracy of the model. A large defining factor of each UA is the geographical location of the population, which does not have a large impact on $log(m_{Lt})$ as shown previously. Furthermore, a more significant feature of UAs, regards to $log(m_{Lt})$, may need to be considered in order to produce a more accurate model.   
+
+The data observed is for a one year period and there is clear seasonality present in monthly data. This indicated that a Monte-Carlo simulation cannot be computed as each month/ season would need to be considered seperately and there is only one observation for each month in each location. This limits the conclusions that can be drawn surrounding this adaptation of the model as a forecast for $log(m_{Lt})$ cannot be assessed.
+
+This adaptation of the Lee-Carter model faces various issues as a result of the lack of relationship between each location and lack of geographical relationships with $log(m_{Lt})$ as well as lack of support from the data. 
+
+There are a lack of strong conclusions that can be drawn in this section. However, the aim of this section has been met as the Lee-Carter model has been adapted succesfully to include local area rather than age. The selection of the aim for this section was motivated by the purpose of understanding the impacts of incorporating local area into the Lee-Carter model rather than constructing a 'perfect model' for mortality. Furthermore, the weaknesses recognised in the modelling process, analysis and data can be accounted for in the next section.  
+
+# Constructing an extension to the Lee-Carter model
+
+The final aim of the project is to propose, test and apply an extension to the Lee-Carter model to consider all age, time and local areas. The previous two aims looked at modelling age and local area seperately against time. The ONS defined unitary authorities have been considered as the local areas of the United Kingdom throughout this project as they provide a fairly accurate representation of the geographical seperations of different communities within the UK. In order to extend the Lee-Carter model to include local areas, similarities between each UA need to be considered before modelling. 
+
+## Identifying clusters of local areas
+
+Cluster identification poses three main questions:
+
+1) Why is cluster identification necessary?
+
+2) What characteristics should clusters be identified on?
+
+3) How to identify clusters?
+
+### Why is cluster identification necessary
+
+Cluster identification is necessary in this scenario because there are 170 different unitary authorities, each with varying population sizes, that are contained in the data. Unitary authorities provide a strong indication of geographical seperations between different communities. The geography between these communities is not an aspect that is going to be considered in this extension of the Lee-Carter model. Instead, local areas which have similar characteristics within their populations should be considered in the same population. 
+
+Additionally, modelling each of the 170 UAs in the UK as seperate populations runs the risk of overfitting as there are relatively small population sizes within each UA. Furthermore, to produce an accurate stochastic model to forecast and predict mortality, the number of local areas considered should be grouped which would consequently increase the sample size for each of the groups considered.
+
+### What characteristics should clusters be identified on?
+
+The extension to the Lee-Carter model is anticipated to consider both local area and age. This implies that local areas with similar age distributions should be considered when grouping local areas. Therefore, a variable that best describes the age distribution within each local area should be considered as the variable that clusters are identified on.
+
+The variational coefficient measures the spread of the standard deviation in relation to the mean and can be represented with the formula:
+
+\[
+VC_{xL} = \frac{\sigma_{xL}}{E(xL)}  
+\] where $VC_{xL}$ represents the variational coefficient of age in each location, $\sigma_{xL}$ is the standard deviation of age in each location, and $E(xL)$ is the mean/ expected age of the population in each location.
+
+By taking the variational coefficient of age in each location, a representation of the age distribution for each location can be acknowledged. Using the variational coefficient of the age within each UA allows recognition of which UAs have similar age distributions (clusters). The purpose of this approach is to enable identification of UAs with similar age distributions to allow for a bigger sample size when modelling and forecasting central death rate which will result in smaller confidence intervals (more certainty of forecast).
+
+There was various other variables taken into account in the cluster identification process, for example: clustering based on region (North, South, South East, etc) or even mortality rate. However, clustering on age distribution seemed the most relevant approach because the original Lee-Carter model specifically takes age into account. By applying age distribution based groupings will present groups of UAs with similar age distributions to be considered as a singular populations. Additionally, each group will have an age distribution that can be identified clearly and therefore allows understanding of the variety in age distributions of UAs in the UK.        
+### How to identify clusters? (classification tree)
+
+A classification tree is a non-stochastic method for identifying groups through recursive partioning.[@cart] Classification trees are a form of CART (classification and regression tree) modelling and can be used in various contexts. In this scenario, a classification tree will be used to approximate decisions based on 'variable X' that splits the data into clusters that can be identified at a 95% significance level. The 'Classification Tree Example' describes the general premise of how the classification tree splits the data into groups.         
+
+![Classification Tree Example](C:/Users/z-laptop/OneDrive - University College London/Project/ClassificationTree.jpg)
+
+The reasoning behind using a classification tree was based on the understanding that classification trees have the capability of interpreting both numerical and categorical variables. Classification trees also provide an easy to understand visualisation as an output. However, a disadvantage of this approach which should be noted is that small variations within the data can have large impacts on the results, therefore small population changes will require a new tree to be produced.[@tree]
+
+## Applying a Classification Tree
+
+The aim of applying a classification tree to the data is to identify clusters of UAs with similar age distributions by using the variational coefficient of age within each location. 
+
+The classification tree approach also enables identification of the group in which a 'new' unitary authority would belong in based upon the variational coefficient (standard deviation divided by mean age) of the proposed UA. 
+
+The dataset has to be optimised to produce a classification tree through formatting the dataset with onehot encoding, this means that each location has to be considered as a individual response variable with 0 or 1 values.
+
+```{r RandomForest, eval =TRUE, echo =FALSE, message= FALSE, warning=FALSE}
+
+library(rpart)
+library(mltools)
+library(reshape2)
+library(onehot)
+library(rpart.plot)
+library(RWeka)
+
+rf_data = select(pop_loc, lnmx, Location, Month)
+
+rf_data$Location = as.factor(rf_data$Location)
+
+rf_data$Month = as.factor(rf_data$Month) 
+levels(rf_data$Month) = month.name
+
+rf_data = filter(rf_data, lnmx != "Inf" & lnmx != "-Inf")
+
+
+## box plot for month, lnmx - hidden for now:
+#plot(rf_data$Month, rf_data$lnmx)
+
+
+#rf_data$Month = as.factor(months(rf_data$Month))
+#rf_1hot = one_hot(data.frame(rf_data), cols = "auto",dropCols = FALSE)
+#newdata <- dcast(data = rf_data, lnmx ~ Location +Month, value.var = "lnmx")
+
+encoder = onehot(rf_data, stringsAsFactors = TRUE, addNA=FALSE, max_levels = 200)
+newdata = predict(encoder, rf_data)
+
+split.fun <- function(x, labs, digits, varlen, faclen)
+{    
+  old_labs = labs
+  write.csv(as.data.frame(old_labs), "Labels.csv")
+
+    # replace commas with spaces (needed for strwrap)
+    labs <- gsub(",", " ", labs)
+    
+    for(i in 1:length(labs)) {
+        # split labs[i] into multiple lines
+        labs[i] <- paste(strwrap(labs[i], width=25), collapse="\n")
+    }
+    
+    labs
+    
+}
+
+fit = rpart(data = rf_data, formula = lnmx ~ ., control = rpart.control(cp = 0.05), method = "anova", model=TRUE)
+
+#prp(fit)
+#,  split.fun=split.fun)
+#plot(fit, use.n=TRUE)
+
+#print(fit)
+#predictions <- predict(fit, rf_data)
+
+#fit = J48(data = rf_data, formula = lnmx ~ .)
+fit = rpart(data = rf_data, formula =lnmx ~ Month, control = rpart.control(cp=0.05))
+fit = rpart(data = rf_data, formula =Month ~ lnmx, control = rpart.control(cp=0.05), method = "class")
+
+#prp(fit)
+
+#print(fit)
+
+#text(fit)
+```
+
+Applying a classification tree which regresses variational coefficient on unitary authority with a 95% significance level, the following tree is obtained:
+
+```{r new_GROUPINGS, eval = TRUE, echo = FALSE, fig.width=12, fig.height=10}
+
+library("stringr")
+library("rpart")
+
+rf_data = select(pop_loc, lnmx, Location, Month, variational_coef)
+
+rf_data$Location = as.factor(rf_data$Location)
+
+rf_data$Month = as.factor(rf_data$Month) 
+levels(rf_data$Month) = month.name
+
+rf_data = filter(rf_data, lnmx != "Inf" & lnmx != "-Inf")
+
+#plot(rf_data$Month, rf_data$lnmx)
+
+pop_tree_data = select(rf_data, Location, variational_coef)
+pop_tree_data = unique(pop_tree_data)  
+
+pop_tree = rpart(data = pop_tree_data, formula = variational_coef ~ Location , control = rpart.control(cp=0.05), method = "anova")
+
+#prp(pop_tree)
+prp(pop_tree, type=1, under = TRUE, xflip=TRUE, tweak=1, cex = 0.6, split.cex = 1)
+
+#rpart.plot(pop_tree)
+#print(pop_tree)
+
+
+GROUP_POP_TREE = function(p) {
+  
+group4 = c("Barnsley","Bath and North East Somerset","Bedford","Bexley","Blackburn with Darwen","Blackpool","Blaeu Gwent","Bolton","Bournemouth, Christchurch and Poole","Bracknell Forest","Bridgend","Bury","Caerphilly","Calderdale","Carmarthenshire","Central Bedfordshire","Ceredigion","Cheshire West and Chester","City of London","Conwy","Darlington","Denbighshire","Derby","Doncaster","Dudley","East Riding of Yorkshire","Flintshire","Gateshead","Gwynedd","Halton","Harrow","Hartlepool","Havering","Herefordshire, County of","Isle of Anglesey","Isle of Wight","Isles of Scilly","Kensington and Chelsea","Kingston upon Thames","Knowsley","Merthyr Tydfil","Middlesbrough","Monmouthshire","Neath Port Talbot","Newport","North East Lincolnshire","North Lincolnshire","North Somerset","North Tyneside","Northumberland","Oldham","Pembrokeshire","Peterborough","Plymouth","Powys","Reading","Redcar and Cleveland","Rhondda Cynon Taf","Richmond upon Thames","Rochdale","Rotherham","Rutland","Sefton","Shropshire","Slough","Solihull","South Gloucestershire","South Tyneside","Southend-on-Sea","St. Helens","Stockport","Stockton-on-Tees","Stoke-on-Trent","Sunderland","Sutton","Swansea","Swindon","Tameside","Telford and Wrekin","Thurrock","Torbay","Torfaen","Trafford","Vale of Glamorgan","Walsall","Warrington","West Berkshire","Windsor and Maidenhead","Wirral","Wokingham","Wolverhampton","Wrexham","York"  )  
+
+group5 = c("Barking and Dagenham","Barnet","Brent","Brighton and Hove","Bromley","Camden","Cheshire East","Cornwall","County Durham","Croydon","Cumbria","Dorset","Ealing","East Sussex","Enfield","Gloucestershire","Greenwich","Hammersmith and Fulham","Haringey","Hillingdon","Hounslow","Kingston upon Hull, City of","Kirklees","Luton","Medway","Merton","Milton Keynes","North Yorkshire","Portsmouth","Redbridge","Salford","Sandwell","Somerset","Southampton","Wakefield","Waltham Forest","Warwickshire","Westminster","Wigan","Wiltshire","Worcestershire")
+  
+
+group6 = c("Bradford","Bristol, City of","Cambridgeshire","Cardiff","Coventry","Derbyshire","Devon","Hackney","Islington","Lambeth","Leicester","Leicestershire","Lewisham","Lincolnshire","Liverpool","Newcastle upon Tyne","Newham","Norfolk","Northamptonshire","Nottingham","Nottinghamshire","Oxfordshire","Sheffield","Southwark","Staffordshire","Suffolk","Tower Hamlets","Wandsworth","West Sussex")
+
+group7 = c("Birmingham","Essex","Hampshire","Hertfordshire","Kent","Lancashire","Leeds","Manchester","Surrey" )
+
+RESULT = NULL
+
+if(p %in% group4){RESULT=1}
+if(p %in% group5){RESULT=2}
+if(p %in% group6){RESULT=3}
+if(p %in% group7){RESULT=4}
+
+return(RESULT)
+}
+
+
+rf_data$group = sapply(rf_data$Location, FUN = GROUP_POP_TREE)
+
+
+grp_key = 
+  rf_data %>% 
+  select(Location, group) %>% unique()
+
+grp_key$group = as.factor(grp_key$group) 
+
+new_la = merge(la, grp_key, by="Location")
+
+```
+
+Four individual clusters can be identified from the classification tree. This indicates that there are four clusters of UAs that have significantly different age distributions (represented by variational coefficient) at a 95% significance level. Furthermore, this will enable grouping of the 171 unitary authorities into four seperate populations.
+
+These clusters can be visualised geographically using a map:
+
+```{r new_map22 , fig.height = 8, fig.weight = 7, echo=FALSE}
+ggmap(map_datt) +geom_polygon(data = new_la,aes(x=long.x, y=lat.x,group=group.x, fill = group.y),alpha =0.8, show.legend=TRUE)+ ggtitle("Figure 22: Unitary Authority grouped by Variational Coefficient through classification tree visualisation")
+```
+
+The map indicates which Unitary Authorities belong into which cluster (group).  As the classification tree is based on variational coefficient we can understand which areas have similar age distributions on a geographical level. The groups are ascending from lowest variational coefficient to highest. Interestingly, most of Wales (apart from the Vale of Glamorgan) and surrounding areas fall into the same group. England shows a wider variety of clusters. The majority of the East Midlands as well as Central London fall into group 3. Many Outer London boroughs fall into group 3, whilst most of the UAs that surround London fall into group 4. Although, there does seem to be a strong spread of these age distributions accross England as all four groups are present in English UAs.   
+
+The next stage in the process is to construct an extension to the Lee-Carter model that considers these clusters of locations with similar age distributions that have been calculated using the classification tree. Before constructing a model, an analysis of these clusters is needed to understand the affect of clustering on the data and additionally assist the decision making process on how to adjust the Lee-Carter model to account for both age, location and time. 
+
+## Analysis of groups
+
+Visualised below are the groupings from the classification tree.
+
+Group 1:
+
+```{r word_cloud1, eval= TRUE, message = FALSE, warning = FALSE,echo=FALSE, fig.width=7, fig.height=3}
+library("wordcloud2")
+library("gtable")
+library("webshot")
+library("htmlwidgets")
+
+grp_key_wc = grp_key
+grp_key_wc$group = as.numeric(grp_key_wc$group)
+
+
+my_graph <- wordcloud2(filter(grp_key_wc, group ==1), size= 0.1, color = 'cornflowerblue')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc1.png", delay = 5, vwidth = 1000, vheight = 300)
+```
+
+Group 2:
+
+```{r word_cloud2, eval= TRUE, message = FALSE, warning = FALSE,echo=FALSE, fig.width=7, fig.height=3}
+my_graph <- wordcloud2(filter(grp_key_wc, group ==2), size= 0.1, color = 'darkolivegreen')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc2.png", delay = 5, vwidth = 1000, vheight = 300)
+```
+
+Group 3:
+
+```{r word_cloud3, eval= TRUE, message = FALSE, warning = FALSE,echo=FALSE, fig.width=7, fig.height=3}
+my_graph <- wordcloud2(filter(grp_key_wc, group ==3), size= 0.1, color = 'darkorange')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc3.png", delay = 5, vwidth = 1000, vheight = 300)
+```
+
+Group 4:
+
+```{r word_cloud4, eval= TRUE, message = FALSE, warning = FALSE,echo=FALSE, fig.width=7, fig.height=3}
+my_graph <- wordcloud2(filter(grp_key_wc, group ==4), size= 0.1, color = 'darkorchid')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc4.png", delay = 5, vwidth = 1000, vheight = 300)
+```
+
+Number of Unitary Authorities classified within each group:
+```{r number_of_groups, echo=FALSE, eval = TRUE, message = FALSE, warning = FALSE}
+n_grp = grp_key %>% group_by(group) %>% summarise(n = n()) %>% select("Group" = group, n = n)
+knitr::kable(n_grp)
+```
+
+Looking at the names of the UAs in each group, there are some interesting observations that can be made. Group 3 and 4 are the smallest groups (29 and 9 UAs respectively) which contain some of the biggest cities and counties in the UK (Liverpool, Cardiff and Bristol in Group 3, and Manchester, Birmingham and Leeds in Group 4) which have not been split into multiple UAs. Group 3 and 4 also both consist mainly of UAs that contain universities (high student populations). In Group 2, which contains 41 UAs, there is a large number of the London UAs that can be noticed, like Greenwich, Barking, Westminster and Enfield. Group 1 is the largest cluster of UAs and contains 93 different unitary authorities. There is not an obvious relationship between the UAs that can be noticed within Group 1 which suggests that this group represents the rest of the UK (that are not contained in group 2, 3 or 4) and the differences in age distributions for these UAs are not distinguishable at a 95% significance level.  
+
+```{r descriptive_analysis, fig.width=10, eval=TRUE, echo=FALSE, warning = FALSE, message=FALSE, fig.width=10}
+
+Mort_data = read_csv("ONS_Mortality_Data.csv")
+Mort_data = na.omit(Mort_data)
+Mort_data =as.data.frame(Mort_data)
+
+for(i in 2:21){
+Mort_data[,i] = as.numeric(Mort_data[,i])
+}
+Mort_data$UA = as.factor(Mort_data$UA)
+
+Grouped_UA = 
+  Mort_data %>%
+  group_by(UA) %>%
+  summarise(`<1` = sum(`<1`),
+            `1-4` = sum(as.numeric(`1-4`)),
+            `5-9` = sum(as.numeric(`5-9`)),
+            `10-14` = sum(as.numeric(`10-14`)),
+            `15-19` = sum(as.numeric(`15-19`)),
+            `20-24` = sum(as.numeric(`20-24`)),
+            `25-29` = sum(as.numeric(`25-29`)),
+            `30-34` = sum(as.numeric(`30-34`)),
+            `35-39` = sum(as.numeric(`35-39`)),
+            `40-44` = sum(as.numeric(`40-44`)),
+            `45-49` = sum(as.numeric(`45-49`)),
+            `50-54` = sum(as.numeric(`50-54`)),
+            `55-59` = sum(as.numeric(`55-59`)),
+            `60-64` = sum(as.numeric(`60-64`)), 
+            `65-69` = sum(as.numeric(`65-69`)),
+            `70-74` = sum(as.numeric(`70-74`)), 
+            `75-79` = sum(as.numeric(`75-79`)),
+            `80-84` = sum(as.numeric(`80-84`)),
+            `85-89` = sum(as.numeric(`85-89`)),
+            `90+` = sum(as.numeric(`90+`)))
+
+
+Grp_UA = merge(Grouped_UA, grp_key, by.x = "UA", by.y = "Location", all.x=TRUE, all.y=TRUE)
+
+Grp_UA_omit_na = na.omit(Grp_UA)
+
+Grped = 
+  Grp_UA_omit_na %>%
+  group_by(group) %>%
+  summarise(`<1` = sum(`<1`),
+            `1-4` = sum(as.numeric(`1-4`)),
+            `5-9` = sum(as.numeric(`5-9`)),
+            `10-14` = sum(as.numeric(`10-14`)),
+            `15-19` = sum(as.numeric(`15-19`)),
+            `20-24` = sum(as.numeric(`20-24`)),
+            `25-29` = sum(as.numeric(`25-29`)),
+            `30-34` = sum(as.numeric(`30-34`)),
+            `35-39` = sum(as.numeric(`35-39`)),
+            `40-44` = sum(as.numeric(`40-44`)),
+            `45-49` = sum(as.numeric(`45-49`)),
+            `50-54` = sum(as.numeric(`50-54`)),
+            `55-59` = sum(as.numeric(`55-59`)),
+            `60-64` = sum(as.numeric(`60-64`)), 
+            `65-69` = sum(as.numeric(`65-69`)),
+            `70-74` = sum(as.numeric(`70-74`)), 
+            `75-79` = sum(as.numeric(`75-79`)),
+            `80-84` = sum(as.numeric(`80-84`)),
+            `85-89` = sum(as.numeric(`85-89`)),
+            `90+` = sum(as.numeric(`90+`)))
+
+
+#knitr::kable(Grped)
+
+Tmp4 = apply(t(as.matrix(t(Grped))),1, as.numeric)
+Tmp4 = Tmp4[-1,]
+#colnames(Tmp4) = c("1","2", "3", "4")
+#Tmp4 = cbind("Age" = colnames(Grped)[2:21], Tmp4)
+Tmp4 = data.frame(Tmp4)
+Tmp4$Age = colnames(Grped[2:21])
+Tmp4$Age = factor(Tmp4$Age, levels = c("<1", "1-4","5-9","10-14","15-19","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80-84","85-89","90+"))
+
+
+#ggplot(data = Tmp4, aes(x = Age, y = X1, fill = Age)) +geom_col() + theme_minimal() +theme(legend.position = "none")
+
+Mort_Grped = merge(Mort_data, grp_key, by.x = "UA", by.y = "Location", all.x=TRUE, all.y=TRUE)
+Mort_Grped = na.omit(Mort_Grped) ## Fix at later stage - some locations do not merge 
+
+### Central Death Rate
+## Calculate population groups
+
+pop_data$is_UA = pop_data$Name %in% unique(as.character(Mort_Grped$UA))
+pop_data = filter(pop_data, is_UA == TRUE)
+
+Mort_Grped = filter(Mort_Grped, UA != "Rhondda Cynon Taff" & 
+                    UA != "Blaenau Gwent" & 
+                    UA != "Buckinghamshire" & UA != "Rhondda Cynon Taf")
+
+pop_data = filter(pop_data, Name != "Rhondda Cynon Taff" & 
+                    Name != "Blaenau Gwent" & Name != "Buckinghamshire" & Name != "Rhondda Cynon Taf")
+
+new_pop_data = pop_data[,2]
+new_pop_data$`<1` = pop_data$`0`
+new_pop_data$`1-4` = pop_data$`1` + pop_data$`2` + pop_data$`3` + pop_data$`4` 
+new_pop_data$`5-9` = pop_data$`5` + pop_data$`6` + pop_data$`7` + pop_data$`8` +  pop_data$`9` 
+new_pop_data$`10-14` = pop_data$`10` + pop_data$`11` + pop_data$`12` + pop_data$`13` +  pop_data$`14` 
+new_pop_data$`15-19` = pop_data$`15` + pop_data$`16` + pop_data$`17` + pop_data$`18` +  pop_data$`19`
+new_pop_data$`20-24` = pop_data$`20` + pop_data$`21` + pop_data$`22` + pop_data$`23` +  pop_data$`24`
+new_pop_data$`25-29` = pop_data$`25` + pop_data$`26` + pop_data$`27` + pop_data$`28` +  pop_data$`29`
+new_pop_data$`30-34` = pop_data$`30` + pop_data$`31` + pop_data$`32` + pop_data$`33` +  pop_data$`34`
+new_pop_data$`35-39` = pop_data$`35` + pop_data$`36` + pop_data$`37` + pop_data$`38` +  pop_data$`39`
+new_pop_data$`40-44` = pop_data$`40` + pop_data$`41` + pop_data$`42` + pop_data$`43` +  pop_data$`44`     
+new_pop_data$`45-49` = pop_data$`45` + pop_data$`46` + pop_data$`47` + pop_data$`48` +  pop_data$`49`
+new_pop_data$`50-54` = pop_data$`50` + pop_data$`51` + pop_data$`52` + pop_data$`53` +  pop_data$`54`
+new_pop_data$`55-59` = pop_data$`55` + pop_data$`56` + pop_data$`57` + pop_data$`58` +  pop_data$`59`
+new_pop_data$`60-64` = pop_data$`60` + pop_data$`61` + pop_data$`62` + pop_data$`63` +  pop_data$`64`
+new_pop_data$`65-69` = pop_data$`65` + pop_data$`66` + pop_data$`67` + pop_data$`68` +  pop_data$`69`
+new_pop_data$`70-74` = pop_data$`70` + pop_data$`71` + pop_data$`72` + pop_data$`73` +  pop_data$`74`
+new_pop_data$`75-79` = pop_data$`75` + pop_data$`76` + pop_data$`77` + pop_data$`78` +  pop_data$`79`
+new_pop_data$`80-84` = pop_data$`80` + pop_data$`81` + pop_data$`82` + pop_data$`83` +  pop_data$`84`
+new_pop_data$`85-89` = pop_data$`85` + pop_data$`86` + pop_data$`87` + pop_data$`88` +  pop_data$`89`
+new_pop_data$`90+` = pop_data$`90+`
+
+new_pop_data_grped = merge(new_pop_data, grp_key, by.x = "Name", by.y = "Location")
+
+age_dists = 
+  new_pop_data_grped %>%
+  group_by(group) %>%
+  summarise(`<1` = sum(`<1`), 
+`1-4` = sum(`1-4`),
+`5-9` = sum(`5-9`),
+`10-14` = sum(`10-14`),
+`15-19` = sum(`15-19`),
+`20-24` = sum(`20-24`),
+`25-29` = sum(`25-29`),
+`30-34` = sum(`30-34`),
+`35-39` = sum(`35-39`),
+`40-44` = sum(`40-44`),
+`45-49` = sum(`45-49`),
+`50-54` = sum(`50-54`),
+`55-59` = sum(`55-59`),
+`60-64` = sum(`60-64`),
+`65-69` = sum(`65-69`),
+`70-74` = sum(`70-74`),
+`75-79` = sum(`75-79`),
+`80-84` = sum(`80-84`),
+`85-89` = sum(`85-89`),
+`90+` = sum(`90+`) )
+
+par(mfrow = c(2,2))
+barplot(as.numeric(age_dists[1,-1]), type = "h", lwd= 3, col ="cornflowerblue", ylim = c(0,1500000), names.arg = colnames(age_dists)[-1], main = "Figure 24: Group 1")
+#lines(as.numeric(age_dists[1,-1]), col="red")
+barplot(as.numeric(age_dists[2,-1]), type = "h", lwd= 3, col ="darkolivegreen", ylim = c(0,1500000), names.arg = colnames(age_dists)[-1], main = "Group 2")
+#lines(as.numeric(age_dists[2,-1]), col="red")
+barplot(as.numeric(age_dists[3,-1]), type = "h", lwd= 3, col ="darkorange", ylim = c(0,1500000), names.arg = colnames(age_dists)[-1], main = "Group 3")
+#lines(as.numeric(age_dists[3,-1]), col="red")
+barplot(as.numeric(age_dists[4,-1]), type = "h", lwd= 3, col ="darkorchid", ylim = c(0,1500000), names.arg = colnames(age_dists)[-1], main = "Group 4")
+#lines(as.numeric(age_dists[4,-1]), col="red")
+par(mfrow = c(1,1))
+
+
+```
+
+Comparing the age group distributions for the four groups, they all follow a similar shape with a few noticable differences. The first age group contains only one age group (this is due to newborn mortality being a seperate category itself because live-births are usually more common than infant mortality and so should be categorised seperately) and so has a significantly lower frequency. Group 1 UAs contains a higher proportion of the population within the 50-60 year old age bracket, group 2 seems to have a slightly higher proportion of the population between 25-40, the distribution for group 3 has a younger peak than the other groups as it peaks between ages 20-34 and group 4 shows a relatively flat distribution. As mortality is generally higher within older age groups, the expectation would be that group 1 should have the highest mortality rates and group 3 and 4 should have the least.   
+
+## Choice of model
+
+### Proposals
+
+As there have been four clusters of UAs with different age distributions identified through the classification tree process, they can be accounted for in the modelling process. There are a various potential methods to incorporate the results of the classification tree into Lee-Carter model. However, there are two proposals for models that can be considered as relevant to the aim of this section and the purpose of the Lee-Carter model:
+
+1) Consider the four clusters as an ordered variable (with group 4 representing the youngest age sample ascending to group 1 as the oldest age sample) and take this as the $x$ (age variable) in the standard Lee-Carter model. This is similar process to the model constructed previously which adjusted the Lee-Carter to include location instead of age; in this situation the group would be replacing age:
+\[
+log(m_{gt}) = \alpha_g + \beta_g K_t + \epsilon_{gt}
+\] 
+This approach considers all age, location and year. Age and location are represented in the group $g$ variable.
+
+The creation of this approach has been carefully considered to combat some of the main issues present in the adaptation of the Lee-Carter model in the previous section: UAs have been grouped; meaning local area and age can be considered as a categorical variable with an order, there are large populations in each group and there are only 4 groups which allows for groups to be easily compared.     
+
+2) Produce an individual Lee-Carter model for each of the four clusters and combine these to produce an estimate for the entire population.
+Each individiual group will be constructed using the original Lee-Carter model:
+\[
+log(m_{gxt}) = \alpha_{gx} + \beta_{gx} K_{gt} + \epsilon_{gxt}
+\] for $g \in (1,2,3,4)$
+
+Combining the four matrices of $log(m_{gxt})$, a model for the entire (national) population can be formulated:
+\[
+log(m_{xt}) = log(\frac{\sum_{g=1}^{4} P_{gx}(exp(log(m_{gxt})))}{sum(P_{1x}) + sum(P_{2x}) + sum(P_{3x}) + sum(P_{4x})})
+\] where P is a population matrix of g and x   
+
+This model produces a seperate Lee-Carter model for each of the groups, producing four matrices of $log(m_{gxt})$ (for each group). The exponent of is then $log(m_{gxt})$ taken to achieve $m_{gxt}$. Each $m_{gxt}$ is then multiplied by the population at each age in each group $P_{gx}$ which obtains the total number of deaths for each group $g$ in each age $x$ at time $t$. These four matrices are all then added together to produce the total number of deaths at each age $x$ at time $t$ for the entire UK. We then divide this matrix by the national population at each $x$ which results in matrix $m_{xt}$. The logarithm can then be taken to get $log(m_{xt})$.         
+
+### Decision
+
+The model that will be used is the second model. 
+
+The main reasonings behind this decision: 
+
+- The results will be in the form $log(m_{xt})$ rather than $log(m_{gt})$ which means that it can be compared to the original Lee-Carter model.
+
+- The model considers each age, location and time seperately whilst the first model considers group $g$ as a representation of age and location. 
+
+- There are only four groups considered in model 1 (with no $x$ variable), which may result in lack of trend and result in issues in the estimation of $\alpha$ and $\beta$.  
+
+### Data
+
+Going forward with the model, the data being used has been obtained from https://www.nomisweb.co.uk/ which is an ONS affliated site that allows users to query from their datasets on specific conditions. The data that has queried on is the 'Mortality Statistics' dataset with ONS Unitary Authority, year (2013-2019), age group and deaths as the query selections. Unfortunately, there are only 7 years of mortality statistics available in the dataset, this should present no issue in constructing an extension to the Lee-Carter model. However, this will naturally result in a decrease in the accuracy of the stochastic model and limit both forecasting and comparison capabilities. This dataset was chosen as it includes year, rather than month, to avoid seasonality issues enountered in this previous section.   
+
+## Model for comparison
+
+Model comparison is a critical process in the evaluative process of a creating a model. The original Lee-Carter model can be used as a benchmark to compare the proposed stochastic model with. However, the Lee-Carter model constructed in section 2 was created using actuarial life table data. In order to maintain consistency and fairly compare the models, a Lee-Carter model needs to be constructed with the ONS mortality data. 
+
+Using the same approach in section 3, values for $\alpha_x$, $u(x)$ ($u(x) = \beta_x$) and $v(t)$ ($v(t) = \frac{K_t}{S_1}$) can be estimated: 
+
+```{r comparison_model, eval = TRUE, echo = FALSE, fig.width=10, message = FALSE, warning = FALSE}
+
+Mort_Grped = merge(Mort_data, grp_key, by.x = "UA", by.y = "Location", all.x=TRUE, all.y=TRUE)
+Mort_Grped = na.omit(Mort_Grped) ## Fix at later stage - some locations do not merge 
+
+Mort_new_BASE = 
+  Mort_Grped %>%
+  group_by(Year) %>%
+  summarise(`<1` = sum(`<1`), 
+`1-4` = sum(`1-4`),
+`5-9` = sum(`5-9`),
+`10-14` = sum(`10-14`),
+`15-19` = sum(`15-19`),
+`20-24` = sum(`20-24`),
+`25-29` = sum(`25-29`),
+`30-34` = sum(`30-34`),
+`35-39` = sum(`35-39`),
+`40-44` = sum(`40-44`),
+`45-49` = sum(`45-49`),
+`50-54` = sum(`50-54`),
+`55-59` = sum(`55-59`),
+`60-64` = sum(`60-64`),
+`65-69` = sum(`65-69`),
+`70-74` = sum(`70-74`),
+`75-79` = sum(`75-79`),
+`80-84` = sum(`80-84`),
+`85-89` = sum(`85-89`),
+`90+` = sum(`90+`) )
+
+### base_model
+Mort_new_BASE = as.matrix(Mort_new_BASE[,2:21])
+rownames(Mort_new_BASE) = 2013:2018
+
+total_pop = colSums(age_dists[,2:21])
+for(j in 1:6) {
+  for(i in 1:20){
+    Mort_new_BASE[j,i] = Mort_new_BASE[j,i] / total_pop[i]
+  }
+}
+
+act_pop_lnmx = log(Mort_new_BASE)
+###
+
+
+## ax
+ax_base = (colMeans(act_pop_lnmx))
+
+#ktbx
+ktbx_base = as.data.frame(act_pop_lnmx) 
+for(i in 1:20){
+      ktbx_base[,i] = ktbx_base[,i] - ax_base[i]
+}
+
+svd_base = svd(ktbx_base)
+
+ux_base = svd_base$v[,1]
+vt_base = svd_base$u[,1]
+d_base = svd_base$d[1]
+
+fit_base = ktbx_base
+
+# plot estimates
+par(mfrow= c(1,3))
+plot(ax_base, type = "l", main = "Figure 25: alpha(x)")
+plot(ux_base, type = "l", main = "u(x)")
+plot(vt_base, type = "l", main = "v(t)")
+par(mfrow = c(1,1))
+
+# set all vals to 0
+fit_base[fit_base!= 100000] = 0 
+
+for(i in 1:6){
+  for(j in 1:20){
+    fit_base[i,j] = ax_base[j] + (d_base * ux_base[j] * vt_base[i])
+  }
+}
+```
+
+It can be observed that $\alpha$ follows a similar trend as observed in the previous models; there is a high levels of infant mortality which is followed by a sharp decrease, $\alpha$ then increases gradually as age increases. $u(x)$ shows an interesting trend, there does not seem to be any significant observations from the relationship of age $x$ and $u(x)$. $v(t)$ shows a constant increase from $t=1$ to $t=6$ with a sharp decrease at $t=5$ (year 2017). The graph for $v(t)$ highlights the lack of observed years present in the data, which reinforces that there will be a decrease in the reliability of forecasting for $v(t)$.    
+
+Furthermore, these estimated values can then be used to fit the Lee-Carter model to the data. This then allows the difference between the fitted and actual values of the model to be observed:
+
+```{r comparison_model_part2, eval = TRUE, echo = FALSE, fig.width=10, message = FALSE, warning = FALSE}
+
+fit_base = as.matrix(fit_base)
+
+dif_base = act_pop_lnmx - fit_base
+dif_base=melt(dif_base)
+colnames(dif_base) = c("Year","Age", "Difference")
+
+ggplot(dif_base, aes(`Age`, Year,fill= Difference)) +   geom_tile() +
+   geom_text(aes(label = round(Difference, 2))) +
+  scale_fill_gradient2(low=("blue"), mid= "white",high="red") +
+  ggtitle("Figure 26: Difference in actual values and fitted values for log(mxt) for the base model")
+
+```
+
+The Lee-Carter model seems to fit fairly accurately in the older age groups (for ages older tha 30) as there is relatively low differences between the actual and fitted values. However, there is a lot of variability within the younger age groups. It can be seen that the model significantly both under and over estimates $log(m_{xt})$ in the younger age groups, especially within years 2016 and 2017.   
+
+## Model production
+
+Now that the comparison model has been created, the process of producing the extension of the Lee-Carter model can proceed.
+
+The first step in this process is to split the data into four datasets representing each group identified with the classification tree previously. Each group can be considered as an individual population meaning that a Lee-Carter model can be created for each group. To fit a Lee-Carter model, values for $\alpha$, $\beta$ and $K_t$ need to be estimated. $\alpha$ in this model represents the force of mortality in each age group $x$ for each group $g$:
+
+\[
+\alpha_{gx} = \frac{ \sum_{t=1}^{6}log(m_{gxt}) } {6}
+\] where $log(m_{g,x,t})$ is the logarithm of central death rate in group $g$ at age $x$ in year $t$. As there are 6 observed values for $t$ (2013 to 2018), $t$ takes values from 1 to 6. 
+
+```{r Creating_Grp_Models, eval = TRUE, echo = FALSE, fig.width=10, warning=FALSE, message=FALSE}
+
+Mort_new_Grped = 
+  Mort_Grped %>%
+  group_by(Year, group) %>%
+  summarise(`<1` = sum(`<1`), 
+`1-4` = sum(`1-4`),
+`5-9` = sum(`5-9`),
+`10-14` = sum(`10-14`),
+`15-19` = sum(`15-19`),
+`20-24` = sum(`20-24`),
+`25-29` = sum(`25-29`),
+`30-34` = sum(`30-34`),
+`35-39` = sum(`35-39`),
+`40-44` = sum(`40-44`),
+`45-49` = sum(`45-49`),
+`50-54` = sum(`50-54`),
+`55-59` = sum(`55-59`),
+`60-64` = sum(`60-64`),
+`65-69` = sum(`65-69`),
+`70-74` = sum(`70-74`),
+`75-79` = sum(`75-79`),
+`80-84` = sum(`80-84`),
+`85-89` = sum(`85-89`),
+`90+` = sum(`90+`) )
+
+### Central Death Rate
+
+## Calculate population groups
+
+Mort_Grp1 = filter(Mort_new_Grped, group == 1)
+Mort_Grp2 = filter(Mort_new_Grped, group == 2)
+Mort_Grp3 = filter(Mort_new_Grped, group == 3)
+Mort_Grp4 = filter(Mort_new_Grped, group == 4)
+
+for(i in 2:21){
+for(j in 1:6) {
+  Mort_Grp1[j,i+1] = log(Mort_Grp1[j,i+1]/age_dists[1,i])
+  Mort_Grp2[j,i+1] = log(Mort_Grp2[j,i+1] / age_dists[2,i])
+  Mort_Grp3[j,i+1] = log(Mort_Grp3[j,i+1] / age_dists[3,i])
+  Mort_Grp4[j,i+1] = log(Mort_Grp4[j,i+1] / age_dists[4,i])
+}
+}
+
+
+
+###
+Mean_lnmx = rbind(colMeans(Mort_Grp1[,-2]), colMeans(Mort_Grp2[,-2]), colMeans(Mort_Grp3[,-2]), colMeans(Mort_Grp4[,-2]))[,-1]
+
+ax=Mean_lnmx
+
+Mean_lnmx = melt(Mean_lnmx)
+colnames(Mean_lnmx) = c("Group", "Age Group", "lnmx")
+
+
+#ggplot(Mean_lnmx, aes(factor(`Age Group`), lnmx,color=as.factor(Group) )) +
+ # geom_point() +geom_line(stat = "summary")
+
+#ggplot(Mean_lnmx, aes(`Age Group`, Group,fill= lnmx)) +   geom_tile() +
+ #  geom_text(aes(label = round(lnmx, 1))) +
+  #scale_fill_gradient2(low=("white"), mid= "darkorange",high="red") +
+  #ggtitle("Groups against average lnmx")
+
+```
+ 
+Looking at the estimated values for $\alpha_{gx}$, it is noticable that the shape for each group's $\alpha$ curve is similar to the shape of the curve of the $\alpha$ in the comparison model. The main variation between values for $\alpha$ lie within the younger age groups. The trough for the curve of $\alpha$ is present in the 5-9 years old age group and the value of the trough differs in each group; group 1 shows the lowest trough, followed by group 2, then group 3 and group 4 which show a relatively small difference. After age group 15-19, the $\alpha$ values stay fairly closely together. This suggests that the force of mortality in groups 3 and 4 and that these two populations might be very similar. 
+
+```{r ax_grps, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4}
+
+## ax
+ax1 = colMeans(Mort_Grp1[,-2])
+ax2 = colMeans(Mort_Grp2[,-2])
+ax3 = colMeans(Mort_Grp3[,-2])
+ax4 = colMeans(Mort_Grp4[,-2])
+
+ax1  = as.data.frame(ax1)[-1,]
+ax2 =  as.data.frame(ax2)[-1,]
+ax3 =  as.data.frame(ax3)[-1,]
+ax4 =  as.data.frame(ax4)[-1,]
+
+#ggplot(aes(y = colnames(age_dists)[-1])) + geom_line(aes(x = ax1))
+
+#plot(factor(colnames(age_dists)[-1], levels  =colnames(age_dists)[-1]), rep(0,20), type ="n",lwd = 0.1, main = "Alpha estimates for each Group")
+#lines(ax1, col = 2, lwd=2)
+#lines(ax2, col = 3, lwd=2)
+#lines(ax3, col = 4, lwd=2)
+#lines(ax4, col = 5, lwd=2)
+ggplot(Mean_lnmx, aes(factor(`Age Group`), lnmx,color=as.factor(Group) )) +
+  geom_point() +geom_line(stat = "summary") + ggtitle("Figure 27: Estimated alpha values for all groups") + ylab("Age Group") + labs(color = "Group")
+
+
+```
+
+The next stage in the process of producing the model is estimating values for $\beta$ and $K$. Again, this process is the same for as the original Lee-Carter model (using singular value decomposition). However, seperate estimates of $\beta$ and $K$ need to be obtained for each group.
+
+\[
+\beta_{gx} K_{gx} = log(m_{gxt}) - \alpha_{gx} = S_{g1} u(g,x) v(g,t)
+\] where $S_{g1}$ is the first value obtained from diagonal matrix produced from SVD for each group. $u(g,x)$ and $v(g,t)$ are the first column vectors from the $u$ and $v$ matrices produced by SVD for each group. 
+
+```{r ktbx_grps, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=5}
+
+## kt and bx
+ktbx1 = as.matrix(Mort_Grp1[,3:22]) 
+ktbx2 = as.matrix(Mort_Grp2[,3:22]) 
+ktbx3 = as.matrix(Mort_Grp3[,3:22]) 
+ktbx4 = as.matrix(Mort_Grp4[,3:22]) 
+
+row.names(ktbx1) = 2013:2018
+row.names(ktbx2) = 2013:2018
+row.names(ktbx3) = 2013:2018
+row.names(ktbx4) = 2013:2018
+
+for(i in 1:20){
+      ktbx1[,i] = ktbx1[,i] - ax1[i]
+      ktbx2[,i] = ktbx2[,i] - ax2[i]
+      ktbx3[,i] = ktbx3[,i] - ax3[i]
+      ktbx4[,i] = ktbx4[,i] - ax4[i]
+}
+
+svd1 = svd(ktbx1)
+svd2 = svd(ktbx2)
+svd3 = svd(ktbx3)
+svd4 = svd(ktbx4)
+
+ux1 = svd1$v[,1]
+vt1 = svd1$u[,1]
+ux2 = svd2$v[,1]
+vt2 = svd2$u[,1]
+ux3 = svd3$v[,1]
+vt3 = svd3$u[,1]
+ux4 = svd4$v[,1]
+vt4 = svd4$u[,1]
+
+d1 = svd1$d[1]
+d2 = svd2$d[1]
+d3 = svd3$d[1]
+d4 = svd4$d[1]
+
+
+
+# ux plot
+par(mfrow = c(2,2))
+plot(ux1, type = "l", ylim = c(-1,1), col = 1, main = "Figure 28: u(x) - Group 1", lwd = 2, xlab = "u(x)")
+plot(ux2, type = "l", ylim = c(-1,1), col = 2, main = "u(x) - Group 2", lwd = 2, xlab = "u(x)")
+plot(ux3, type = "l", ylim = c(-1,1), col = 3, main = "u(x) - Group 3", lwd = 2, xlab = "u(x)")
+plot(ux4, type = "l", ylim = c(-1,1), col = 4, main = "u(x) - Group 4", lwd = 2, xlab = "u(x)")
+par(mfrow = c(1,1))
+
+```
+
+The $u(x)$ value represents $\beta_x$ which is the change in $log(m_{xt})$ in each age group in any given year. Unlike the estimates for $\alpha_x$, the $u(x)$ estimates are very different for each group. The curve for $u(x)$ differs for all groups in the earlier age groups. For the older age groups the value for $u(x)$ stays around approximately 0 for all groups. The fluctuations of $u(x)$ between each group signifies that there is a significant difference in mortality within the younger age groups for each cluster of age distributions. This also supports that the reasoning behind grouping the local areas based on their age distributions as mortality seems to effect each population cluster differently.   
+
+```{r ktbx_grps_2, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=5}
+
+
+#vt plot
+par(mfrow = c(2,2))
+plot(2013:2018, vt1, type = "l", ylim = c(-1,1), col = 1, main = "Figure 29: v(t) - Group 1", lwd = 2, xlab = "v(t)")
+plot(2013:2018, vt2, type = "l", ylim = c(-1,1), col = 2, main = "v(t) - Group 2", lwd = 2, xlab = "v(t)")
+plot(2013:2018, vt3, type = "l", ylim = c(-1,1), col = 3, main = "v(t) - Group 3", lwd = 2, xlab = "v(t)")
+plot(2013:2018, vt4, type = "l", ylim = c(-1,1), col = 4, main = "v(t) - Group 4", lwd = 2, xlab = "v(t)")
+par(mfrow = c(1,1))
+
+
+# log(mx) = ax + (ux*vt) + sum()  
+fit1 = ktbx1
+fit2 = ktbx2
+fit3 = ktbx3
+fit4 = ktbx4
+
+# set all vals to 0
+fit1[fit1!= 100000] = 0 
+fit2[fit2!= 100000] = 0 
+fit3[fit3!= 100000] = 0 
+fit4[fit4!= 100000] = 0 
+
+
+for(i in 1:6){
+  for(j in 1:20){
+    fit1[i,j] = ax1[j] + (d1 * ux1[j] * vt1[i])
+    fit2[i,j] = ax2[j] + (d2 * ux2[j] * vt2[i])
+    fit3[i,j] = ax3[j] + (d3 * ux3[j] * vt3[i])
+    fit4[i,j] = ax4[j] + (d4 * ux4[j] * vt4[i])
+  }
+}
+
+# modify actual lnmx dataset
+actual1 = as.matrix(Mort_Grp1[,3:22]) 
+actual2 = as.matrix(Mort_Grp2[,3:22]) 
+actual3 = as.matrix(Mort_Grp3[,3:22]) 
+actual4 = as.matrix(Mort_Grp4[,3:22]) 
+
+row.names(actual1) = 2013:2018
+row.names(actual2) = 2013:2018
+row.names(actual3) = 2013:2018
+row.names(actual4) = 2013:2018
+
+actual1= melt(actual1)
+actual2= melt(actual2)
+actual3= melt(actual3)
+actual4= melt(actual4)
+
+colnames(actual1) = c("Year","Age", "Actual")
+colnames(actual2) = c("Year","Age", "Actual")
+colnames(actual3) = c("Year","Age", "Actual")
+colnames(actual4) = c("Year","Age", "Actual")
+
+# put fitted lnmx in same format
+fit_tbl1 = melt(fit1)
+fit_tbl2 = melt(fit2)
+fit_tbl3 = melt(fit3)
+fit_tbl4 = melt(fit4)
+
+colnames(fit_tbl1) = c("Year","Age", "Fitted")
+colnames(fit_tbl2) = c("Year","Age", "Fitted")
+colnames(fit_tbl3) = c("Year","Age", "Fitted")
+colnames(fit_tbl4) = c("Year","Age", "Fitted")
+
+
+# now merge 2 dfs
+dif1 = merge(actual1, fit_tbl1, by = c("Year", "Age"), all=TRUE)
+dif2 = merge(actual2, fit_tbl2, by = c("Year", "Age"), all=TRUE)
+dif3 = merge(actual3, fit_tbl3, by = c("Year", "Age"), all=TRUE)
+dif4 = merge(actual4, fit_tbl4, by = c("Year", "Age"), all=TRUE)
+
+dif1$Difference = dif1$Actual - dif1$Fitted
+dif2$Difference = dif2$Actual - dif2$Fitted
+dif3$Difference = dif3$Actual - dif3$Fitted
+dif4$Difference = dif4$Actual - dif4$Fitted
+```
+
+The curves for $v(t)$ show high variation between each different group. A clear limitation in the estimates for $v(t)$ is the lack of years observed due to there only being 6. This does not allow us to gain a strong representation of the change in $log(m_x)$ for a change in $t$. Observing the 6 years available, it is evident that $v(t)$ follows a general upwards trend with visible peaks in 2014 for groups 1 and 3, and 2016 for groups 2 and 4.
+
+```{r dif_grps_plot, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=10}
+
+# plot
+di1 = ggplot(dif1, aes(`Age`, `Year`,fill= Difference)) +   geom_tile() +
+   geom_text(aes(label = round(Difference, 2))) + ylab("Group 1") +
+  scale_fill_gradient2(low=("blue"), mid= "white",high="red", limits = c(-0.5, 0.5)) +
+  ggtitle("Figure 30: Difference in actual and fitted values for log(gmx) by group, age and year") + xlab("")
+di2 = ggplot(dif2, aes(`Age`, `Year`,fill= Difference)) +   geom_tile() +
+   geom_text(aes(label = round(Difference, 2))) + ylab("Group 2") +
+  scale_fill_gradient2(low=("blue"), mid= "white",high="red", limits = c(-0.5, 0.5))  + xlab("")
+di3 = ggplot(dif3, aes(`Age`, `Year`,fill= Difference)) +   geom_tile() +
+   geom_text(aes(label = round(Difference, 2))) + ylab("Group 3") +
+  scale_fill_gradient2(low=("blue"), mid= "white",high="red",  limits = c(-0.5, 0.5)) + xlab("") 
+di4 = ggplot(dif4, aes(`Age`, `Year`,fill= Difference)) +   geom_tile() +
+   geom_text(aes(label = round(Difference, 2))) + ylab("Group 4") +
+  scale_fill_gradient2(low=("blue"), mid= "white",high="red",  limits = c(-0.5, 0.5))  + xlab("")
+
+multiplot(di1,di2,di3,di4, cols =1)
+
+```
+
+Similar to the comparison model, the residual values for each of the groups are generally very low for the older ages and there is higher variation within the younger age groups. Groups 3 and 4 have lower residual values compared to the other groups and the comparison model which suggests that the smaller sample sizes of UAs have closely related age distributions, suggesting that the Lee-Carter model is able to fit better for these groups as there is less volatility within each group. There are no signifcant comparisons that can be observed in the difference of residuals of the new model (extention) and  Lee-Carter model (comparison).     
+
+```{r combining_models, echo = FALSE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=6}
+
+# Expontial to get mx 
+Mx1 = as.data.frame(exp(fit1))
+Mx2 = as.data.frame(exp(fit2))
+Mx3 = as.data.frame(exp(fit3))
+Mx4 = as.data.frame(exp(fit4))
+
+# Death count vals (by multiplying by population)
+for(j in 1:6) {
+  for(i in 1:20){
+    Mx1[j,i] = Mx1[j,i] * age_dists[1, i+1]
+    Mx2[j,i] = Mx2[j,i] * age_dists[2, i+1]
+    Mx3[j,i] = Mx3[j,i] * age_dists[3, i+1]
+    Mx4[j,i] = Mx4[j,i] * age_dists[4, i+1]
+  }
+}
+
+# Number of deaths in entire population
+Mx = Mx1 +Mx2 + Mx3 +Mx4
+
+total_pop = colSums(age_dists[,2:21])
+for(j in 1:6) {
+  for(i in 1:20){
+    Mx[j,i] = Mx[j,i] / total_pop[i]
+  }
+}
+
+# log mx fitted values
+fit_lnmx = log(Mx)
+
+
+### Plot diffff
+Diff_new = as.matrix(act_pop_lnmx - fit_lnmx)
+
+Diff_new = melt(Diff_new)
+colnames(Diff_new) = c("Year", "Age", "Difference") 
+
+ggplot(Diff_new, aes(`Age`, Year,fill= Difference)) +   geom_tile() +
+   geom_text(aes(label = round(Difference, 2))) +
+  scale_fill_gradient2(low=("blue"), mid= "white",high="red") +
+  ggtitle("Figure 31: Difference in actual values and fitted values for log(mx) for the combined model")
+
+```
+
+```{r Creating_Grp_Models_dupe, eval = FALSE, echo = FALSE}
+
+Mort_Grped = merge(Mort_data, grp_key, by.x = "UA", by.y = "Location", all.x=TRUE, all.y=TRUE)
+Mort_Grped = na.omit(Mort_Grped) ## Fix at later stage - some locations do not merge 
+
+### Central Death Rate
+
+## Calculate population groups
+
+pop_data$is_UA = pop_data$Name %in% unique(as.character(Mort_Grped$UA))
+pop_data = filter(pop_data, is_UA == TRUE)
+
+Mort_Grped = filter(Mort_Grped, UA != "Rhondda Cynon Taff" & 
+                    UA != "Blaenau Gwent" & 
+                    UA != "Buckinghamshire" & UA != "Rhondda Cynon Taf")
+
+pop_data = filter(pop_data, Name != "Rhondda Cynon Taff" & 
+                    Name != "Blaenau Gwent" & Name != "Buckinghamshire" & Name != "Rhondda Cynon Taf")
+
+new_pop_data = pop_data[,2]
+
+new_pop_data$`<1` = pop_data$`0`
+new_pop_data$`1-4` = pop_data$`1` + pop_data$`2` + pop_data$`3` + pop_data$`4` 
+new_pop_data$`5-9` = pop_data$`5` + pop_data$`6` + pop_data$`7` + pop_data$`8` +  pop_data$`9` 
+new_pop_data$`10-14` = pop_data$`10` + pop_data$`11` + pop_data$`12` + pop_data$`13` +  pop_data$`14` 
+new_pop_data$`15-19` = pop_data$`15` + pop_data$`16` + pop_data$`17` + pop_data$`18` +  pop_data$`19`
+new_pop_data$`20-24` = pop_data$`20` + pop_data$`21` + pop_data$`22` + pop_data$`23` +  pop_data$`24`
+new_pop_data$`25-29` = pop_data$`25` + pop_data$`26` + pop_data$`27` + pop_data$`28` +  pop_data$`29`
+new_pop_data$`30-34` = pop_data$`30` + pop_data$`31` + pop_data$`32` + pop_data$`33` +  pop_data$`34`
+new_pop_data$`35-39` = pop_data$`35` + pop_data$`36` + pop_data$`37` + pop_data$`38` +  pop_data$`39`
+new_pop_data$`40-44` = pop_data$`40` + pop_data$`41` + pop_data$`42` + pop_data$`43` +  pop_data$`44`     
+new_pop_data$`45-49` = pop_data$`45` + pop_data$`46` + pop_data$`47` + pop_data$`48` +  pop_data$`49`
+new_pop_data$`50-54` = pop_data$`50` + pop_data$`51` + pop_data$`52` + pop_data$`53` +  pop_data$`54`
+new_pop_data$`55-59` = pop_data$`55` + pop_data$`56` + pop_data$`57` + pop_data$`58` +  pop_data$`59`
+new_pop_data$`60-64` = pop_data$`60` + pop_data$`61` + pop_data$`62` + pop_data$`63` +  pop_data$`64`
+new_pop_data$`65-69` = pop_data$`65` + pop_data$`66` + pop_data$`67` + pop_data$`68` +  pop_data$`69`
+new_pop_data$`70-74` = pop_data$`70` + pop_data$`71` + pop_data$`72` + pop_data$`73` +  pop_data$`74`
+new_pop_data$`75-79` = pop_data$`75` + pop_data$`76` + pop_data$`77` + pop_data$`78` +  pop_data$`79`
+new_pop_data$`80-84` = pop_data$`80` + pop_data$`81` + pop_data$`82` + pop_data$`83` +  pop_data$`84`
+new_pop_data$`85-89` = pop_data$`85` + pop_data$`86` + pop_data$`87` + pop_data$`88` +  pop_data$`89`
+new_pop_data$`90+` = pop_data$`90+`
+
+### Create df of Mx
+new_pop_data = new_pop_data[order(new_pop_data$Name),]
+Mort_Grped = Mort_Grped[order(Mort_Grped$UA),]
+
+UAs = new_pop_data$Name
+Mort_All = data.frame(row.names = 1:(length(UAs)*6))
+Mort_All$Location = rep(UAs, 6)
+Mort_All$Year = 0
+Mort_All$`<1`   = 0
+Mort_All$`1-4`  = 0
+Mort_All$`5-9`  = 0
+Mort_All$`10-14` = 0
+Mort_All$`15-19` = 0
+Mort_All$`20-24` = 0
+Mort_All$`25-29` = 0
+Mort_All$`30-34` = 0
+Mort_All$`35-39` = 0
+Mort_All$`40-44` = 0
+Mort_All$`45-49` = 0
+Mort_All$`50-54` = 0
+Mort_All$`55-59` = 0
+Mort_All$`60-64` = 0
+Mort_All$`65-69` = 0
+Mort_All$`70-74` = 0
+Mort_All$`75-79` = 0
+Mort_All$`80-84` = 0
+Mort_All$`85-89` = 0
+Mort_All$`90+` = 0
+Mort_All = Mort_All[order(Mort_All$Location),]
+
+Mort_All$Year = rep(2013:2018, length(UAs))
+
+row.names(Mort_All) =  1:(length(UAs)*6)
+
+for(i in 1:nrow(Mort_All)){
+  Mort_All$`<1` [i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`<1` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`<1` ))
+Mort_All$`1-4`[i] =  log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`1-4` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`1-4`))
+Mort_All$`5-9`[i] =  log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`5-9` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`5-9`))
+Mort_All$`10-14`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`10-14` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`10-14`))
+Mort_All$`15-19`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`15-19` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`15-19`))
+Mort_All$`20-24`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`20-24` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`20-24`))
+Mort_All$`25-29`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`25-29` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`25-29`))
+Mort_All$`30-34`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`30-34` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`30-34`))
+Mort_All$`35-39`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`35-39` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`35-39`))
+Mort_All$`40-44`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`40-44` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`40-44`))
+Mort_All$`45-49`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`45-49` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`45-49`))
+Mort_All$`50-54`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`50-54` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`50-54`))
+Mort_All$`55-59`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`55-59` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`55-59`))
+Mort_All$`60-64`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`60-64` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`60-64`))
+Mort_All$`65-69`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`65-69` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`65-69`))
+Mort_All$`70-74`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`70-74` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`70-74`))
+Mort_All$`75-79`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`75-79` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`75-79`))
+Mort_All$`80-84`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`80-84` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`80-84`))
+Mort_All$`85-89`[i] =log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`85-89` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`85-89`))
+Mort_All$`90+`[i] =  log(filter(Mort_Grped, UA == Mort_All$Location[i] & Year == Mort_All$Year[i])$`90+` /as.numeric(filter(new_pop_data, Name == Mort_All$Location[i])$`90+`))
+}
+
+
+for(i in 1: length(levels(as.factor(Mort_All$Location)))){
+tmp_Mort_filtered = filter(Mort_All, Location == levels(as.factor(Mort_All$Location))[i])  
+
+tmp_Location = tmp_Mort_filtered$Location[1]
+tmp_Mtrx = as.data.frame(tmp_Mort_filtered[,3:ncol(tmp_Mort_filtered)], row.names = tmp_Mort_filtered$Year)
+
+tmp_Mtrx = log(tmp_Mtrx)
+tmp_Mtrx[tmp_Mtrx == "-Inf"] = min(tmp_Mtrx[tmp_Mtrx != min(tmp_Mtrx)]) #  take min lnmx where mx is 0
+
+tmp_ax = rowMeans(tmp_Mtrx)
+
+tmp_KtBx = matrix(nrow= length(tmp_ax),ncol = ncol(tmp_Mtrx))
+
+colnames(tmp_KtBx) = colnames(tmp_Mtrx)
+rownames(tmp_KtBx) = rownames(tmp_Mtrx)
+
+for(z in 1:length(tmp_ax)){
+  for(j in 1:ncol(tmp_KtBx)){
+      tmp_KtBx[z,j] = tmp_Mtrx[z,j] - tmp_ax[z]  
+  }
+}
+
+tmp_svd = svd(tmp_KtBx)
+
+tmp_u = tmp_svd$v[,1]
+tmp_v = tmp_svd$u[,1]
+tmp_d = tmp_svd$d[1]
+
+
+end_tmpv = tmp_v[length(tmp_v)]
+diff_tmpv = diff(tmp_v)
+
+paths<-1000
+years<-5
+sample<-matrix(0,nrow=(years+1),ncol=paths)
+  
+for(z in 1:paths){
+  changes <- rnorm(years,mean=mean(diff_vt),sd=sd(diff_vt))
+
+		sample[1,z]<-end_vt
+		for(j in 2:(years+1))
+		{
+			sample[j,z]<-sample[j-1,z]+changes[j-1]
+		}
+}	
+	
+	sample = sample[-1,]
+	
+	par(mfrow = c(1,2))
+
+	#matplot(sample,main="Figure 7: Monte-carlo simulation for v(t)",xlab="Year",ylab="v(t)",type="l")
+	
+	tmp_fcst = cbind(rbind(quantile(sample[1,], 0.5),
+	                 quantile(sample[2,], 0.5),
+	                 quantile(sample[3,], 0.5),
+	                 quantile(sample[4,], 0.5),
+	                 quantile(sample[5,], 0.5)),
+	                 rbind(quantile(sample[1,], 0.05),
+	                 quantile(sample[2,], 0.05),
+	                 quantile(sample[3,], 0.05),
+	                 quantile(sample[4,], 0.05),
+	                 quantile(sample[5,], 0.05)),
+	                 rbind(quantile(sample[1,], 0.95),
+	                 quantile(sample[2,], 0.95),
+	                 quantile(sample[3,], 0.95),
+	                 quantile(sample[4,], 0.95),
+	                 quantile(sample[5,], 0.95)))
+
+tmp_lnmx_fcst = matrix(ncol= ncol(tmp_Mtrx),nrow = years)
+
+colnames(tmp_lnmx_fcst) = colnames(tmp_Mtrx)
+rownames(tmp_lnmx_fcst) = 2019: (2019-1+years)
+
+for(z in 1:nrow(tmp_lnmx_fcst)){
+  for(j in 1:ncol(tmp_lnmx_fcst)){
+      tmp_lnmx_fcst[z,j] = tmp_ax[z] + (tmp_d[1]*tmp_u[j]*tmp_fcst[z,1])
+  }
+}	
+	#if(z ==1) {
+	#  tmp_sum_fcst = tmp_fcst
+	#} else {
+	#  tmp_sum_fcst = tmp_sum_fcst + tmp_fcst
+	#}
+	
+}	         
+
+
+
+
+###########
+#tmp_df = melt(tmp_KtBx)
+#colnames(tmp_df) = c("Year", "Age", "lnmx")
+#####
+#####
+
+
+
+
+
+######################
+
+for(i in 1:nrow(pop_data)){
+
+age_tbl = cbind(rownames(t(pop_data[i, 5:94])), t(pop_data[i, 5:94]))
+age_tbl = as.data.frame(age_tbl)
+age_tbl[,1] = as.numeric(age_tbl[,1])
+age_tbl[,2] = as.numeric(age_tbl[,2])
+age_tbl$freq = age_tbl[,1] * age_tbl[,2]
+
+if(i ==1){
+    a = data.frame(sum(age_tbl$freq)/ sum(age_tbl[,2]))
+    v = data.frame(sd(age_tbl[,2]))
+  } else {
+    a = rbind(a,sum(age_tbl$freq)/ sum(age_tbl[,2]))
+    v = rbind(v, sd(age_tbl[,2]))
+}
+}
+
+a$mean = a[,1]
+a$sd = v[,1]
+pop_data1 = pop_data[,1:4]
+pop_data1 = cbind(pop_data1,"mean" = a$mean, "sd" = a$sd)
+
+pop_data1$variational_coef = pop_data1$sd / pop_data1$mean   
+
+pop_loc = merge(loc_tbl, pop_data1, by.x = "Area Code", by.y = "Code", all.x = TRUE)
+
+pop_loc$mx = pop_loc$Deaths / pop_loc$`All ages`
+
+pop_loc$lnmx = log(pop_loc$mx)
+
+
+###### START AGAIN using DEC 17
+#
+#MX_LOC[,1] = (loc_data[,3]+ loc_data[,4])/2
+#
+
+
+###### Estimation of variables 
+## ax
+
+ax = 
+  pop_loc %>%
+  group_by(Location) %>%
+  summarise(sumlnmx = sum(lnmx))
+
+ax$ax = ax$sumlnmx / nlevels(as.factor(pop_loc$Month))
+
+## k and bx
+Mtrx = matrix(ncol= nlevels(as.factor(pop_loc$Month)),nrow = nlevels(as.factor(pop_loc$Location)))
+
+colnames(Mtrx) = levels(as.factor(pop_loc$Month))
+rownames(Mtrx) = levels(as.factor(pop_loc$Location))
+
+
+for(i in 1:12){
+  for(j in 1:173){
+      Mtrx[j,i] = (filter(pop_loc, Month == levels(as.factor(pop_loc$Month))[i] & Location == ax$Location[j])$lnmx[1]) - ax$ax[j]  
+  }
+}
+
+
+Mtrx = Mtrx[rowSums(is.na(Mtrx[ , 1:12])) == 0, ]
+
+
+## sort data before doing next
+
+
+svd_mtrx = svd(Mtrx)
+
+ux = svd_mtrx$u[,1]
+vt = svd_mtrx$v[,1]
+
+#vt = vt / sum(ux)
+#ux = ux / sum(ux)
+
+plot(vt)
+temp2 = 
+  pop_loc %>% 
+  filter(is.na(lnmx) == FALSE) %>%
+  group_by(Location) %>%
+  summarise(lnmx = mean(lnmx)) %>%
+  select(Location, lnmx)
+
+plot(ux)
+
+############# log(mx) = ax + (ux*vt) + sum()  
+
+fitted_lnmx = matrix(ncol= 12,nrow = nrow(Mtrx))
+
+colnames(fitted_lnmx) = month.name
+rownames(fitted_lnmx) = rownames(Mtrx)
+
+for(i in 1:nrow(fitted_lnmx)){
+  for(j in 1:12){
+      fitted_lnmx[i,j] = (filter(ax, Location == rownames(fitted_lnmx)[i])$ax) + (svd_mtrx$d[1]*ux[i]*vt[j])
+  }
+}
+
+new_fit = melt(fitted_lnmx)
+
+colnames(new_fit) = c("Location","Month", "Fitted")
+
+new_fit = merge(new_fit, pop_loc, by = c("Location", "Month"), all.x=TRUE)
+
+#new_fit = cbind(new_fit,"Actual" =deaths$lnmx)
+
+temp6 = 
+  new_fit %>%
+  group_by(Location) %>%
+  summarise(lnmx = mean(lnmx),
+            Fitted = mean(Fitted))
+
+ggplot(temp6, aes(lnmx,Fitted, color = Location)) +geom_point(size=0.1) + theme(legend.position = "none")
+
+
+ggplot(new_fit, aes(lnmx,Fitted, color = Month)) +geom_point(size=0.1) #+ theme(legend.position = "none")
+
+plot((new_fit$Fitted-new_fit$lnmx), type = "p") +abline(h=0)
+    
+    
+    
+```
+
+## Evaluating the model
+
+```{r residual_summary, echo=FALSE, eval=TRUE, warning = FALSE, message = FALSE}
+
+knitr:: kable(cbind("Lee-Carter Model" = c(round(summary(dif_base$Difference),4),"SD" = round(sd(dif_base$Difference),4)),
+                    "New Model" = c(round(summary(Diff_new$Difference),4),"SD" = round(sd(Diff_new$Difference),4))))
+
+
+```
+
+Interestingly, the summary statistics for the new model and the original Lee-Carter model suggest that they perform very similarly. By design, the residuals for the Lee-Carter model have a mean of 0, whilst the new model has a slightly higher mean value of `r round(mean(Diff_new$Difference),4)`. The standard deviation of the new model is lower than the Lee-Carter model. Although, this difference is very small. Observing the statistics implies that the model has the potential for being an accurate method to model and predict $log(m_{xt})$. However, there is no sufficient evidence that the new model is better/ worst than the original Lee-Carter model.       
+
+## Markov-Chain Monte-Carlo simulation to forecast 2019 mortality
+
+
+Purposefully withheld from the dataset used to produce the model and the comparison model is the mortality statistics from the year 2019. The reasoning behind this decision is to be able to use a Markov-Chain Monte Carlo simulation on both models (trained on data from 2013-2018) to predict the mortality rate in 2019 (data that the models have not been trained on). Although, this is only one additional year of data, the aim is to be able to understand the difference in the forecasting accuracy of the two models.   
+
+```{r lnmx_2019, echo=FALSE, eval=TRUE, warning=FALSE, message = FALSE}
+
+data_19 = read_csv("2019.csv")
+colnames(data_19) =c("UA",colnames(Mort_new_BASE))
+
+data_19_grp = merge(data_19, grp_key, by.x = "UA", by.y = "Location", all.x=TRUE, all.y=TRUE)
+data_19_grp = na.omit(data_19_grp) ## Fix at later stage - some locations do not merge 
+
+
+grp_19 = 
+  data_19_grp %>%
+    group_by(group) %>%
+    summarise(`<1` = sum(`<1`), 
+    `1-4` = sum(`1-4`),
+    `5-9` = sum(`5-9`),
+    `10-14` = sum(`10-14`),
+    `15-19` = sum(`15-19`),
+    `20-24` = sum(`20-24`),
+    `25-29` = sum(`25-29`),
+    `30-34` = sum(`30-34`),
+    `35-39` = sum(`35-39`),
+    `40-44` = sum(`40-44`),
+    `45-49` = sum(`45-49`),
+    `50-54` = sum(`50-54`),
+    `55-59` = sum(`55-59`),
+    `60-64` = sum(`60-64`),
+    `65-69` = sum(`65-69`),
+    `70-74` = sum(`70-74`),
+    `75-79` = sum(`75-79`),
+    `80-84` = sum(`80-84`),
+    `85-89` = sum(`85-89`),
+    `90+` = sum(`90+`) )
+
+
+grp_19_base  = colSums(grp_19[,2:21])
+grp_19_base = log(grp_19_base / total_pop) 
+
+grp_19[,2:21] =log(grp_19[,2:21] / age_dists[,2:21])
+
+
+```
+
+Assuming the difference in each value for $v(t)$, $v(t) - v(t-1)$, is a normally distributed random variable with mean $\mu$ and standard deviation $\sigma$. A simulation of future values of $v(t)$ can be produced by drawing from the distribution of the difference in $v(t)$. Drawing from the distribution 10,000 times will produce 10,000 predicted values for the difference between 2018 and 2019's value for $v(t)$. Then by adding the value for $v(t)$ in 2018, estimated values for $v(t)$ are obtained. Taking the median value of this vector of 10,000 estimates a singular estimate for $v(t)$ is obtained. Taking the 5th and 95th percentile will also provide a 90% significance level interval for $v(t)$.         
+
+```{r mc_base_2019, echo =FALSE, eval = TRUE, warning=FALSE, message = FALSE}
+
+end_vt_base = vt_base[length(vt_base)]
+diff_vt_base = diff(vt_base)
+
+
+paths<-10000
+years<-1
+sample_base<-rnorm(paths,mean=mean(diff_vt_base),sd=sd(diff_vt_base))
+sample_base = sample_base + end_vt_base
+
+ # matrix(0,nrow=paths,ncol=4)
+  
+vt_2019_base = cbind(quantile(sample_base,probs = 0.05), quantile(sample_base,probs = 0.5),quantile(sample_base,probs = 0.95))
+row.names(vt_2019_base) = 1
+colnames(vt_2019_base) = c("L", "M", "U")
+
+
+lnmx_base_2019 = matrix(nrow = 1, ncol = 20)
+row.names(lnmx_base_2019) = 1
+colnames(lnmx_base_2019) = colnames(Mx1)
+for(i in 1:20) {
+  lnmx_base_2019[1,i] = ax_base[i] + (d_base * ux_base[i] * vt_2019_base[1,2])
+
+}  
+
+resbase19 = grp_19_base - lnmx_base_2019
+
+```
+
+```{r mc_2019, echo = FALSE, eval=TRUE, fig.width=10, warning=FALSE, message = FALSE}
+
+end_vt1 = vt1[length(vt1)]
+end_vt2 = vt2[length(vt2)]
+end_vt3 = vt3[length(vt3)]
+end_vt4 = vt4[length(vt4)]
+
+
+diff_vt1 = diff(vt1)
+diff_vt2 = diff(vt2)
+diff_vt3 = diff(vt3)
+diff_vt4 = diff(vt4)
+
+
+paths<-10000
+years<-1
+sample<-cbind(rnorm(paths,mean=mean(diff_vt1),sd=sd(diff_vt1)), 
+              rnorm(paths,mean=mean(diff_vt2),sd=sd(diff_vt2)),
+              rnorm(paths,mean=mean(diff_vt3),sd=sd(diff_vt3)),
+              rnorm(paths,mean=mean(diff_vt4),sd=sd(diff_vt4)))
+
+sample[,1] = sample[,1] + end_vt1
+sample[,2] = sample[,2] + end_vt2
+sample[,3] = sample[,3] + end_vt3
+sample[,4] = sample[,4] + end_vt4
+
+ # matrix(0,nrow=paths,ncol=4)
+  
+vt_2019 = rbind(
+  cbind(quantile(sample[,1],probs = 0.05), quantile(sample[,1],probs = 0.5),quantile(sample[,1],probs = 0.95)),
+  cbind(quantile(sample[,2],probs = 0.05), quantile(sample[,2],probs = 0.5),quantile(sample[,2],probs = 0.95)),
+  cbind(quantile(sample[,3],probs = 0.05), quantile(sample[,3],probs = 0.5),quantile(sample[,3],probs = 0.95)),
+  cbind(quantile(sample[,4],probs = 0.05), quantile(sample[,4],probs = 0.5),quantile(sample[,4],probs = 0.95))
+)
+
+row.names(vt_2019) = 1:4
+colnames(vt_2019) = c("L", "M", "U")
+
+
+lnmx_2019 = matrix(nrow = 4, ncol = 20)
+row.names(lnmx_2019) = 1:4
+colnames(lnmx_2019) = colnames(Mx1)
+for(i in 1:20) {
+  lnmx_2019[1,i] = ax1[i] + (d1 * ux1[i] * vt_2019[1,2])
+  lnmx_2019[2,i] = ax2[i] + (d2 * ux2[i] * vt_2019[2,2])
+  lnmx_2019[3,i] = ax3[i] + (d3 * ux3[i] * vt_2019[3,2])
+  lnmx_2019[4,i] = ax4[i] + (d4 * ux4[i] * vt_2019[4,2])
+}  
+
+mx_2019 = exp(lnmx_2019)
+mx_2019 = mx_2019 * age_dists[,2:21]
+
+fcst19 = log(colSums(mx_2019) / total_pop)
+res19 = grp_19_base - fcst19
+
+
+par(mfrow = c(1,2))
+barplot(grp_19_base - lnmx_base_2019, col = 2, main = "Figure 32: Difference between actual  and forecasted lnmx")
+barplot(grp_19_base - fcst19, col = 4, main = "Lee-Carter model (left), New model (right)")
+
+```
+
+The graph shows the difference between the actual and forecasted values for $log(m_x)$ for original Lee-Carter model (left) and new model (right) in each age group. The original Lee-Carter model under fits for almost all age groupss, whilst the new model shows a relatively even spread of both under fitting and over fitting. 
+
+Observing the summary statistics for these residual values: 
+
+```{r forecast_summary, echo=FALSE, eval=TRUE, warning = FALSE, message = FALSE}
+
+knitr:: kable(cbind("Lee-Carter Model" = c(summary(t(resbase19)),"SD" = round(sd(t(resbase19)),4)),
+                    "New Model" = c(summary((res19)),"SD" = round(sd((res19)),4))))
+```
+
+The mean of the difference between the actual and forecasted values for the year 2019 is lower for the new model than the Lee-Carter model. the standard deviation of the difference shows the opposite, the Lee-Carter model has a slightly lower standard deviation. The difference between both these statistics is fairly negligible and again does not provide sufficient evidence that either model is a better predictor for mortality. 
+
+## Final Remarks
+
+Although the comparison between the models could not clarify to whether the extension improved the fitting of the Lee-Carter model, the aim which to propose, produce and apply an extension to the Lee-Carter model that considers age, local area and time has been met. furthermore, the results of this analysis encourage future work on this project to declare whether or not the extension produced can be considered a better model for mortality than the Lee-Carter model.     
+
+# Summary, Limitations and Future Work
+
+## Overview
+
+During the initial stages of the project, three clear aims were identified:
+1) Understanding and applying the Lee-Carter model to UK mortality data,
+2) Adapting the Lee-Carter model to incorporate local areas within the UK rather than age groups, and
+3) Proposing, testing and applying an extension to the Lee-Carter model to consider all age, time and local area. 
+
+The first aim of this project was to uderstand and apply the Lee-Carter model to UK mortality data. Through taking UK mortality life table data, variables $\alpha$, $\beta$ and $K$ of the Lee-Carter model could be estimated. The estimation of these variables then enabled estimation of $log(m_{xt})$ in the Lee-Carter model. Through this process, an understanding of the Lee-Carter model was gained. Fitting of the Lee-Carter model to the UK mortality data also allowed a Monte-Carlo Markov Chain simulation of $log(m_{xt})$ to be produced, this created an idea of the trend that mortality in the UK is likely to follow over the next 20 years. This also provided insight to the forecasting capabilities of the Lee-Carter model. 
+
+The second aim of the project was to adapt the Lee-Carter model to include local areas within the UK rather than age. This aim was achieved through usage of ONS mortality data in 2018 and considering ONS Unitary Authorities as 'local areas'. By susbstituting unitary authorities into the Lee-Carter model instead of age groups the second aim of the project was met. By fitting this model allowed recognition of the differences levels of mortality in different UK local communities. 
+
+The final aim of the project was to propose, test and apply an extension to the Lee-Carter model to consider both local area and age groups. Using a classification tree approach allowed clusters of unitary authorities with similar age distributions to be identified. Taking these clusters into account, two different models were proposed. However, there was a clear stronger choice of model that allowed forecasting capabilities and more flexiblity in terms of comparisons (between the original Lee-Carter model). Fitting this model and forecasting for UK mortality in 2019 was then compared to the fitting and forecasted results of the original Lee-Carter model. These results were then compared against the actual values for mortality in 2019. No significant evidence was found that the new proposed model was a better/ worst predictor of mortality than the original Lee-Carter model. Comparing the models indicated that the new model has the potential to be a considered a strong model for mortality through the similarities with the Lee-Carter model's residual and forecasted values. The conclusion that was made is that this would need to be tested further with more data to understand whether or not the extension can be considered better than the Lee-Carter model. 
+
+After reviewing each aim of the project, it is clear that they have all been met. However, there are limitations that the models/ data/ methods that can be observed. 
+
+## Limitations 
+
+Adapting the Lee-Carter model to incorporate local area rather than age for the second aim posed various limitations (mentioned prior). These limitations were combatted and considered in the final section. Discussed below are the obstacles that were encountered in the final model which could not avoided/ cannot be avoided in future.   
+
+An obvious limitation in the final section of the project is the lack of data that could be used to apply the comparison and new model. The ONS data provided only 7 years (2013-2019); this was due to limitations in the availability of UK mortality datasets that provided all year, age and unitary authority. This limited the ability to analyse and compare the new model with the comparison model. This could be avoided by using data from a different country which have age and local area mortality datasets which cover a longer period, for example: US mortality by US state.
+
+Another limitation in the extension of the Lee-Carter model that was produced is the classification tree being based on 2018 population data. The clusters identified are only valid for a range of years as populations as populations within local areas constantly change and after a certain period of time, the 2018 population data would no longer be relevent to the data being used. This could be potentially evaded with a dataset that contains more years of data and basing the classification tree on a variable that represents the change in the age distribution over time. 
+
+## Future Work
+
+The final model produced presents many potential opportunities for projects in the future. 
+
+If further years of UK mortality by age group and unitary authority were to become publically available then this project could be further built upon. As this would enable a more accurate analysis of comparing the extension of the Lee-Carter model with the original Lee-Carter model. This would then potentially enable a conclusion to be drawn on whether or not the extension to the model is a better predictor for mortality than the original model.    
+
+Modelling mortality in the United States with the extension of the Lee-Carter model and considering each state as a local area within the model could be a potential project for the future as the 'National Centre for Health Statistics' have a large number of datasets publically available.[@cdc] Additionally, the USA has a range of diversity from state to state which therefore would potentially allow for interesting conclusions to be drawn.  
+
+The model could also be built upon further to not only include local area and age, but additional variables as well. For example: ethnicity, household income and sex. These are common factors that are mentioned in mortality discussions. 
+
+# Appendix
+
+The entirety of this report was produced using R and R Markdown. 
+
+### Libraries
+
+Data Manipulation & Graphs:
+- ggplot2
+- tidyverse
+- reshape2
+- stringr
+
+Map Plots:
+- sf
+- rmapshaper
+- ggmap
+- rgdal
+- RColorBrewer
+
+Classification Tree:
+- rpart
+- mltools
+- reshape2
+- onehot
+- rpart.plot
+- RWeka
+
+Word Clouds:
+- wordcloud2
+- gtable
+- webshot
+- htmlwidgets
+
+R Markdown:
+- knitr
+- bookdown
+- biblatex
+
+### Estimation of variables
+
+```{r axap, echo = TRUE, eval =FALSE}
+
+# log(mxt)
+deaths$lnmx = log(deaths$mx)
+
+# alpha
+ax = 
+  deaths %>%
+  group_by(Age) %>%
+  summarise(summx = sum(lnmx))
+
+ax$ax = ax$summx / nlevels(as.factor(deaths$Year))
+
+## k bx
+Mtrx = matrix(ncol= nlevels(as.factor(deaths$Year)),
+              nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(Mtrx) = levels(as.factor(deaths$Year))
+rownames(Mtrx) = levels(as.factor(deaths$Age))
+
+for(i in 1922:2018){
+  for(j in 0:109){
+      Mtrx[j+1,i-1921] = 
+        (filter(deaths, Year == i & Age == j)$lnmx[1]) - (filter(ax, Age == j)$ax)  
+  }
+}
+
+# SVD
+svd_mtrx = svd(Mtrx)
+
+
+# u, v and s
+ux = svd_mtrx$u[,1]
+vt = svd_mtrx$v[,1]
+d = svd_mtrx$d[1]
+
+
+# Fitted Log(mxt)
+# log(mx) = ax + (s*ux*vt) 
+fitted_lnmx = matrix(ncol= nlevels(as.factor(deaths$Year)),
+                     nrow = nlevels(as.factor(deaths$Age)))
+
+colnames(fitted_lnmx) = levels(as.factor(deaths$Year))
+rownames(fitted_lnmx) = levels(as.factor(deaths$Age))
+
+for(i in 1922:2018){
+  for(j in 0:109){
+      fitted_lnmx[j+1,i-1921] = 
+        (filter(ax, Age == j)$ax) + (d*ux[j+1]*vt[i-1921])
+  }
+}
+
+new_fit = melt(fitted_lnmx)
+colnames(new_fit) = c("Age","Year", "Fitted")
+```
+
+
+### Monte-Carlo simulation of v(t) and plots
+
+```{r mcap, echo = TRUE, eval = FALSE}
+
+runs = 100000
+end_vt = vt[length(vt)]
+diff_vt = diff(vt)
+
+paths<-10000
+years<-20
+sample<-matrix(0,nrow=(years+1),ncol=paths)
+  
+for(i in 1:paths){
+  changes <- rnorm(years,mean=mean(diff_vt),sd=sd(diff_vt))
+
+		sample[1,i]<-end_vt
+		for(j in 2:(years+1))
+		{
+			sample[j,i]<-sample[j-1,i]+changes[j-1]
+		}
+}	
+	
+	sample = sample[-1,]
+	
+	par(mfrow = c(1,2))
+
+	matplot(sample,main="Figure 9: Monte-carlo simulation for v(t)",
+	        xlab="Year",ylab="v(t)",type="l")
+	
+	new_sample = vt
+	for(i in 1:(paths-1)){
+	new_sample = cbind(new_sample,vt)
+	}
+
+	new_sample = rbind(new_sample, sample)
+	
+	matplot(1922:(2018+years),new_sample,
+	        main="(Attached to actual values)",xlab="Year",ylab="v(t)",type="l")
+			
+			
+```
+
+### Percentiles of v(t)
+
+```{r medianap, echo =TRUE, eval=FALSE}
+
+for(i in 1:years){
+  if(i ==1){
+    percentiles_df = data.frame(row.names = 1:20)
+    ordered_sample = data.frame(row.names = 1:paths)
+    ordered_sample$sample = as.numeric(sample[i,])
+    ordered_sample = ordered_sample[order(ordered_sample$sample),]
+    
+    percentiles_df$L[i] = ordered_sample[(0.05*paths)]
+    percentiles_df$M[i] = ordered_sample[(0.5*paths)]
+    percentiles_df$U[i] = ordered_sample[(0.95*paths)]
+    
+    
+  } else{
+    ordered_sample = data.frame(row.names = 1:paths)
+    ordered_sample$sample = as.numeric(sample[i,])
+    ordered_sample = ordered_sample[order(ordered_sample$sample),]
+    
+    percentiles_df$L[i] = ordered_sample[(0.05*paths)]
+    percentiles_df$M[i] = ordered_sample[(0.5*paths)]
+    percentiles_df$U[i] = ordered_sample[(0.95*paths)]
+    
+  }
+}
+
+percentiles_tbl = percentiles_df
+
+rownames(percentiles_tbl) = seq(2019, 2018+years,1)
+percentiles_tbl = round(percentiles_tbl,5)
+colnames(percentiles_tbl) = c("5th", "Median", "95th")
+
+
+percentiles_df$Year = seq(2019, 2018+years,1)
+
+  
+ggplot(data = percentiles_df, aes(x = Year, M)) 
++geom_line(color = "black", size = 1,lty=1) +geom_point() + 
+  geom_ribbon(aes(ymin = L, ymax = U), alpha = 0.3) +
+  ggtitle("Figure 10: Median of v(t) shown with 5th and 95th percentile ribbon")
+
+OLD_sample = data.frame(new_sample[1:(nrow(new_sample)-years),])
+OLD_sample$Year = seq(2018-96, 2018,1)
+
+ggplot(data = percentiles_df, aes(x = Year, M)) +geom_line(color = "blue", lty=2)  + 
+  geom_ribbon(aes(ymin = L, ymax = U), alpha = 0.2) + 
+  ggtitle("Figure 11: Median of v(t) forecast with 5th and 95th percentile shown with actual data") + 
+  geom_line(data =OLD_sample, aes(x = Year,y = new_sample),lty=2)
+
+```
+
+### Map plots 
+
+```{r map_setupap, eval=FALSE, echo = TRUE}
+
+ #import shape file data
+shpla =readOGR(
+  dsn="Counties_and_Unitary_Authorities__December_2017__Boundaries_UK.shp", 
+  verbose = FALSE)
+shpla =  spTransform(shpla, CRS("+proj=longlat +datum=WGS84"))
+
+shpla@data$id = rownames(shpla@data)
+shpla.points = fortify(shpla, region = "id")
+shpla= merge(shpla.points, shpla@data, by = "id")
+
+la = merge(as.data.frame(shpla), summary_deaths,
+           by.x = "ctyua17cd", by.y = "Area Code", all.x=FALSE)
+map_datt <- get_stamenmap( bbox = c(left = -6.2, bottom = 49,
+                                    right = 2, top = 56))
+
+la=la[order(la$order),]
+
+library(RColorBrewer)
+###no background map##
+##ggplot(data = la, aes(x =long.x, y=lat.x,group=group, fill = Deaths)) 
+##+geom_polygon(color = "black") + scale_fill_gradient(low="white", high="red")
+
+ggmap(map_datt) +
+  geom_polygon(data = la,aes(x=long.x, y=lat.x,group=group, fill = Deaths),
+               alpha =0.8, show.legend=TRUE)+ scale_fill_gradient(low="white", high="blue") +
+  ggtitle("Figure 14: Heat map for number of deaths in each ONS Unitary Authority in 2018")
+
+```
+
+### Classification Tree:
+(Manual grouping)
+```{r treeap, eval=FALSE, echo=TRUE}
+
+# Classification tree:
+pop_tree = rpart(data = pop_tree_data, formula = variational_coef ~ Location , control = rpart.control(cp=0.05), method = "anova")
+
+# Plot
+prp(pop_tree, type=1, under = TRUE, xflip=TRUE, tweak=1, cex = 0.6, split.cex = 1)
+
+# Group data
+GROUP_POP_TREE = function(p) {
+  
+group4 = c("Barnsley","Bath and North East Somerset","Bedford","Bexley","Blackburn with Darwen","Blackpool","Blaeu Gwent","Bolton","Bournemouth, Christchurch and Poole","Bracknell Forest","Bridgend","Bury","Caerphilly","Calderdale","Carmarthenshire","Central Bedfordshire","Ceredigion","Cheshire West and Chester","City of London","Conwy","Darlington","Denbighshire","Derby","Doncaster","Dudley","East Riding of Yorkshire","Flintshire","Gateshead","Gwynedd","Halton","Harrow","Hartlepool","Havering","Herefordshire, County of","Isle of Anglesey","Isle of Wight","Isles of Scilly","Kensington and Chelsea","Kingston upon Thames","Knowsley","Merthyr Tydfil","Middlesbrough","Monmouthshire","Neath Port Talbot","Newport","North East Lincolnshire","North Lincolnshire","North Somerset","North Tyneside","Northumberland","Oldham","Pembrokeshire","Peterborough","Plymouth","Powys","Reading","Redcar and Cleveland","Rhondda Cynon Taf","Richmond upon Thames","Rochdale","Rotherham","Rutland","Sefton","Shropshire","Slough","Solihull","South Gloucestershire","South Tyneside","Southend-on-Sea","St. Helens","Stockport","Stockton-on-Tees","Stoke-on-Trent","Sunderland","Sutton","Swansea","Swindon","Tameside","Telford and Wrekin","Thurrock","Torbay","Torfaen","Trafford","Vale of Glamorgan","Walsall","Warrington","West Berkshire","Windsor and Maidenhead","Wirral","Wokingham","Wolverhampton","Wrexham","York"  )  
+
+group5 = c("Barking and Dagenham","Barnet","Brent","Brighton and Hove","Bromley","Camden","Cheshire East","Cornwall","County Durham","Croydon","Cumbria","Dorset","Ealing","East Sussex","Enfield","Gloucestershire","Greenwich","Hammersmith and Fulham","Haringey","Hillingdon","Hounslow","Kingston upon Hull, City of","Kirklees","Luton","Medway","Merton","Milton Keynes","North Yorkshire","Portsmouth","Redbridge","Salford","Sandwell","Somerset","Southampton","Wakefield","Waltham Forest","Warwickshire","Westminster","Wigan","Wiltshire","Worcestershire")
+  
+
+group6 = c("Bradford","Bristol, City of","Cambridgeshire","Cardiff","Coventry","Derbyshire","Devon","Hackney","Islington","Lambeth","Leicester","Leicestershire","Lewisham","Lincolnshire","Liverpool","Newcastle upon Tyne","Newham","Norfolk","Northamptonshire","Nottingham","Nottinghamshire","Oxfordshire","Sheffield","Southwark","Staffordshire","Suffolk","Tower Hamlets","Wandsworth","West Sussex")
+
+group7 = c("Birmingham","Essex","Hampshire","Hertfordshire","Kent","Lancashire","Leeds","Manchester","Surrey" )
+
+RESULT = NULL
+
+if(p %in% group4){RESULT=1}
+if(p %in% group5){RESULT=2}
+if(p %in% group6){RESULT=3}
+if(p %in% group7){RESULT=4}
+
+return(RESULT)
+}
+
+
+rf_data$group = sapply(rf_data$Location, FUN = GROUP_POP_TREE)
+
+grp_key = 
+  rf_data %>% 
+  select(Location, group) %>% unique()
+
+grp_key$group = as.factor(grp_key$group) 
+```
+
+
+### Word Clouds:
+```{r wc_ap, eval= FALSE, echo =TRUE}
+
+grp_key_wc = grp_key
+grp_key_wc$group = as.numeric(grp_key_wc$group)
+
+# 1
+my_graph <- wordcloud2(filter(grp_key_wc, group ==1), size= 0.1, color = 'cornflowerblue')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc1.png", delay = 5, vwidth = 1000, vheight = 300)
+
+# 2
+my_graph <- wordcloud2(filter(grp_key_wc, group ==2), size= 0.1, color = 'darkolivegreen')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc2.png", delay = 5, vwidth = 1000, vheight = 300)
+
+# 3
+my_graph <- wordcloud2(filter(grp_key_wc, group ==3), size= 0.1, color = 'darkorange')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc3.png", delay = 5, vwidth = 1000, vheight = 300)
+
+# 4
+my_graph <- wordcloud2(filter(grp_key_wc, group ==4), size= 0.1, color = 'darkorchid')
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc4.png", delay = 5, vwidth = 1000, vheight = 300)
+```
+
+### Combining the models by group:
+
+```{r grpmdlsap, eval=FALSE, echo = TRUE}
+# Expontial to get mx 
+Mx1 = as.data.frame(exp(fit1))
+Mx2 = as.data.frame(exp(fit2))
+Mx3 = as.data.frame(exp(fit3))
+Mx4 = as.data.frame(exp(fit4))
+
+# Death count vals (by multiplying by population)
+for(j in 1:6) {
+  for(i in 1:20){
+    Mx1[j,i] = Mx1[j,i] * age_dists[1, i+1]
+    Mx2[j,i] = Mx2[j,i] * age_dists[2, i+1]
+    Mx3[j,i] = Mx3[j,i] * age_dists[3, i+1]
+    Mx4[j,i] = Mx4[j,i] * age_dists[4, i+1]
+  }
+}
+
+# Number of deaths in entire population
+Mx = Mx1 +Mx2 + Mx3 +Mx4
+
+total_pop = colSums(age_dists[,2:21])
+for(j in 1:6) {
+  for(i in 1:20){
+    Mx[j,i] = Mx[j,i] / total_pop[i]
+  }
+}
+
+# log mx fitted values
+fit_lnmx = log(Mx)
+
+
+### Difference (residuals) 
+Diff_new = as.matrix(act_pop_lnmx - fit_lnmx)
+
+Diff_new = melt(Diff_new)
+colnames(Diff_new) = c("Year", "Age", "Difference") 
+```
+
+
+# References
+
